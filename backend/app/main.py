@@ -1,0 +1,75 @@
+from fastapi import FastAPI
+
+
+app = FastAPI()
+
+
+stands = [
+    {
+        "id": "test-stand-1",
+        "name": "Test Stand 1",
+        "type": "ladder",
+        "lat": 0.0,
+        "lng": 0.0,
+        "capacity": 1,
+        "preferred_winds": []
+    },
+    {
+        "id": "test-stand-2",
+        "name": "Test Stand 2",
+        "type": "box",
+        "lat": 0.0,
+        "lng": 0.0,
+        "capacity": 1,
+        "preferred_winds": []
+    },
+    {
+        "id": "test-stand-3",
+        "name": "Test Stand 3",
+        "type": "ground",
+        "lat": 0.0,
+        "lng": 0.0,
+        "capacity": 1,
+        "preferred_winds": []
+    },
+    {
+        "id": "test-stand-4",
+        "name": "Test Stand 4",
+        "type": "climber",
+        "lat": 0.0,
+        "lng": 0.0,
+        "capacity": 1,
+        "preferred_winds": []
+    },
+    {
+        "id": "test-stand-5",
+        "name": "Test Stand 5",
+        "type": "ladder",
+        "lat": 0.0,
+        "lng": 0.0,
+        "capacity": 1,
+        "preferred_winds": []
+    },
+    {
+        "id": "test-stand-6",
+        "name": "Test Stand 6",
+        "type": "box",
+        "lat": 0.0,
+        "lng": 0.0,
+        "capacity": 1,
+        "preferred_winds": []
+    },
+    {
+        "id": "test-stand-7",
+        "name": "Test Stand 7",
+        "type": "ground",
+        "lat": 0.0,
+        "lng": 0.0,
+        "capacity": 1,
+        "preferred_winds": []
+    }
+]
+
+@app.get("/api/stands")
+def list_stands():
+    return stands
