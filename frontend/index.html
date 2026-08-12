@@ -1,0 +1,24 @@
+<!doctype html>
+<html>
+  <head>
+    <title>Black Creek Hunt</title>
+  </head>
+  <body>
+    <h1>Stands</h1>
+    <ul id="stands"></ul>
+    <script>
+      const list = document.getElementById("stands");
+      async function loadStands() {
+        const response = await fetch("http://127.0.0.1:8000/api/stands");
+        const data = await response.json();
+
+        for (const stand of data) {
+          const item = document.createElement("li");
+          item.textContent = stand.name;
+          list.appendChild(item);
+        }
+      }
+      loadStands();
+    </script>
+  </body>
+</html>
