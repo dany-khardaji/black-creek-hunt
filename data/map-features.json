@@ -1,0 +1,32 @@
+{
+  "features": [
+    {
+      "id": "feature-1",
+      "name": "Feature 1",
+      "type": "entrance",
+      "lat": 0.0,
+      "lng": 0.0
+    },
+    {
+      "id": "feature-2",
+      "name": "Feature 2",
+      "type": "entrance",
+      "lat": 0.0,
+      "lng": 0.0
+    },
+    {
+      "id": "feature-3",
+      "name": "Feature 3",
+      "type": "graveyard",
+      "lat": 0.0,
+      "lng": 0.0
+    },
+    {
+      "id": "feature-4",
+      "name": "Feature 4",
+      "type": "farmers_camp",
+      "lat": 0.0,
+      "lng": 0.0
+    }
+  ]
+}

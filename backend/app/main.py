@@ -22,3 +22,11 @@ def list_stands():
     rows = conn.execute("SELECT * FROM stands").fetchall()
     conn.close()
     return rows
+
+
+@app.get("/api/map-features")
+def list_map_features():
+    conn = get_connection()
+    rows = conn.execute("SELECT * FROM map_features").fetchall()
+    conn.close()
+    return rows
