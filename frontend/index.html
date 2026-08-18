@@ -33,6 +33,7 @@
     <h1>Stands</h1>
     <div id="map"></div>
     <div id="panel">
+      <button id="panel-close">Close</button>
       <h2 id="panel-name"></h2>
     </div>
     <script>
@@ -75,6 +76,13 @@
         document.getElementById("panel-name").textContent = stand.name;
         document.getElementById("panel").classList.add("open");
       }
+
+      function closePanel() {
+        document.getElementById("panel").classList.remove("open");
+      }
+      document
+        .getElementById("panel-close")
+        .addEventListener("click", closePanel);
 
       loadStands();
       loadMapFeatures();
