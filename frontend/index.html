@@ -11,12 +11,28 @@
       #map {
         height: 100vh;
       }
+
+      #panel {
+        position: absolute;
+        top: 0;
+        right: 0;
+        width: 300px;
+        height: 100vh;
+        background: white;
+        z-index: 1000;
+        padding: 16px;
+      }
     </style>
   </head>
   <body>
     <h1>Stands</h1>
     <div id="map"></div>
+    <div id="panel">
+      <h2 id="panel-name"></h2>
+    </div>
     <script>
+      const API_URL = "http://192.168.50.75:8000";
+
       const map = L.map("map");
       map.setView([35.645, -78.442], 15);
 
@@ -26,7 +42,7 @@
       ).addTo(map);
 
       async function loadStands() {
-        const response = await fetch("http://127.0.0.1:8000/api/stands");
+        const response = await fetch(`${API_URL}/api/stands`);
         const data = await response.json();
 
         for (const stand of data) {
@@ -35,7 +51,7 @@
       }
 
       async function loadMapFeatures() {
-        const response = await fetch("http://127.0.0.1:8000/api/map-features");
+        const response = await fetch(`${API_URL}/api/map-features`);
         const data = await response.json();
 
         for (const feature of data) {
