@@ -22,11 +22,19 @@
 
       L.tileLayer(
         "https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}",
-        {
-          attribution: "Esri",
-          maxZoom: 19,
-        },
+        { attribution: "Esri", maxZoom: 19 },
       ).addTo(map);
+
+      async function loadStands() {
+        const response = await fetch("http://127.0.0.1:8000/api/stands");
+        const data = await response.json();
+
+        for (const stand of data) {
+          L.marker([stand.lat, stand.lng]).addTo(map);
+        }
+      }
+
+      loadStands();
     </script>
   </body>
 </html>
