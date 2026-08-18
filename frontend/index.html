@@ -2,23 +2,31 @@
 <html>
   <head>
     <title>Black Creek Hunt</title>
+    <link
+      rel="stylesheet"
+      href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
+    />
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+    <style>
+      #map {
+        height: 100vh;
+      }
+    </style>
   </head>
   <body>
     <h1>Stands</h1>
-    <ul id="stands"></ul>
+    <div id="map"></div>
     <script>
-      const list = document.getElementById("stands");
-      async function loadStands() {
-        const response = await fetch("http://127.0.0.1:8000/api/stands");
-        const data = await response.json();
+      const map = L.map("map");
+      map.setView([35.645, -78.442], 15);
 
-        for (const stand of data) {
-          const item = document.createElement("li");
-          item.textContent = stand.name;
-          list.appendChild(item);
-        }
-      }
-      loadStands();
+      L.tileLayer(
+        "https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}",
+        {
+          attribution: "Esri",
+          maxZoom: 19,
+        },
+      ).addTo(map);
     </script>
   </body>
 </html>
