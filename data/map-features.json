@@ -4,29 +4,29 @@
       "id": "feature-1",
       "name": "Feature 1",
       "type": "entrance",
-      "lat": 0.0,
-      "lng": 0.0
+      "lat": 35.660461,
+      "lng": -78.414699
     },
     {
       "id": "feature-2",
       "name": "Feature 2",
       "type": "entrance",
-      "lat": 0.0,
-      "lng": 0.0
+      "lat": 35.67296,
+      "lng": -78.452908
     },
     {
       "id": "feature-3",
       "name": "Feature 3",
       "type": "graveyard",
-      "lat": 0.0,
-      "lng": 0.0
+      "lat": 35.668125,
+      "lng": -78.444291
     },
     {
       "id": "feature-4",
       "name": "Feature 4",
       "type": "farmers_camp",
-      "lat": 0.0,
-      "lng": 0.0
+      "lat": 35.666633,
+      "lng": -78.432551
     }
   ]
 }

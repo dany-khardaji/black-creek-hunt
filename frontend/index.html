@@ -34,7 +34,23 @@
         }
       }
 
+      async function loadMapFeatures() {
+        const response = await fetch("http://127.0.0.1:8000/api/map-features");
+        const data = await response.json();
+
+        for (const feature of data) {
+          L.circleMarker([feature.lat, feature.lng], {
+            radius: 6,
+            color: "white",
+            weight: 2,
+            fillColor: "black",
+            fillOpacity: 1,
+          }).addTo(map);
+        }
+      }
+
       loadStands();
+      loadMapFeatures();
     </script>
   </body>
 </html>
