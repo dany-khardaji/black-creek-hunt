@@ -11,7 +11,6 @@
       #map {
         height: 100vh;
       }
-
       #panel {
         position: absolute;
         top: 0;
@@ -23,7 +22,6 @@
         padding: 16px;
         display: none;
       }
-
       #panel.open {
         display: block;
       }
@@ -38,10 +36,8 @@
     </div>
     <script>
       const API_URL = "http://192.168.50.75:8000";
-
       const map = L.map("map");
       map.setView([35.645, -78.442], 15);
-
       L.tileLayer(
         "https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}",
         { attribution: "Esri", maxZoom: 19 },
@@ -54,6 +50,14 @@
         for (const stand of data) {
           const marker = L.marker([stand.lat, stand.lng]).addTo(map);
           marker.on("click", () => openPanel(stand));
+        }
+
+        const params = new URLSearchParams(location.search);
+        const standId = params.get("stand");
+        const stand = data.find((s) => s.id === standId);
+
+        if (stand) {
+          openPanel(stand);
         }
       }
 
@@ -75,6 +79,7 @@
       function openPanel(stand) {
         document.getElementById("panel-name").textContent = stand.name;
         document.getElementById("panel").classList.add("open");
+        history.pushState({}, "", `?stand=${stand.id}`);
       }
 
       function closePanel() {

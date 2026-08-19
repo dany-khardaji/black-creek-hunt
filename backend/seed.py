@@ -6,10 +6,8 @@ from app.database import get_connection
 STANDS = Path(__file__).parent.parent / "data" / "stands.json"
 FEATURES = Path(__file__).parent.parent / "data" / "map-features.json"
 
-
 with open(STANDS) as f:
     stands_data = json.load(f)
-
 with open(FEATURES) as f:
     features_data = json.load(f)
 
@@ -17,7 +15,6 @@ stands = stands_data["stands"]
 features = features_data["features"]
 
 conn = get_connection()
-
 for stand in stands:
     conn.execute(
         """
@@ -49,6 +46,5 @@ for feature in features:
             feature["lng"],
         ),
     )
-
 conn.commit()
 conn.close()
