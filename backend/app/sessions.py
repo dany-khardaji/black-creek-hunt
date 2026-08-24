@@ -17,3 +17,18 @@ def session_boundary(now_utc):
     todays_3am = todays_3am.astimezone(timezone.utc)
 
     return todays_3am
+
+
+def is_stand_occupied(conn, stand_id, now_utc):
+    boundary = session_boundary(now_utc)
+    row = conn.execute(
+        """
+        SELECT * FROM hunts
+        WHERE stand_id = ?
+        AND checked_out_at IS NULL
+        AND checked_in_at > ?
+        """,
+        (stand_id, boundary.isoformat()),
+    ).fetchone()
+
+    return row is not None
