@@ -35,7 +35,11 @@ def test_open_session_makes_stand_occupied(conn):
     now = datetime(2026, 11, 10, 9, 0, tzinfo=timezone.utc)
     conn.execute(
         "INSERT INTO hunts (stand_id, member_id, checked_in_at) VALUES (?, ?, ?)",
-        ("test-stand-1", "member-1", "2026-11-10T12:00:00+00:00"),
+        (
+            "test-stand-1",
+            "member-1",
+            "2026-11-10T12:00:00+00:00",
+        ),
     )
     assert is_stand_occupied(conn, "test-stand-1", now) is True
 
@@ -44,6 +48,24 @@ def test_stale_session_does_not_occupy(conn):
     now = datetime(2026, 11, 10, 9, 0, tzinfo=timezone.utc)
     conn.execute(
         "INSERT INTO hunts (stand_id, member_id, checked_in_at) VALUES (?, ?, ?)",
-        ("test-stand-1", "member-1", "2026-11-09T22:00:00+00:00"),
+        (
+            "test-stand-1",
+            "member-1",
+            "2026-11-09T22:00:00+00:00",
+        ),
+    )
+    assert is_stand_occupied(conn, "test-stand-1", now) is False
+
+
+def test_checked_out_session_does_not_occupy(conn):
+    now = datetime(2026, 11, 10, 9, 0, tzinfo=timezone.utc)
+    conn.execute(
+        "INSERT INTO hunts (stand_id, member_id, checked_in_at, checked_out_at) VALUES (?, ?, ?, ?)",
+        (
+            "test-stand-1",
+            "member-1",
+            "2026-11-10T12:00:00+00:00",
+            "2026-11-10T15:00:00+00:00",
+        ),
     )
     assert is_stand_occupied(conn, "test-stand-1", now) is False
