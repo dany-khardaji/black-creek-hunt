@@ -51,6 +51,9 @@ def check_in(request: CheckInRequest):
     if stand is None:
         raise HTTPException(status_code=404, detail="Stand not found")
 
+    if stand["is_retired"]:
+        raise HTTPException(status_code=409, detail="Stand is retired")
+
     if is_stand_occupied(conn, request.stand_id, now):
         raise HTTPException(status_code=409, detail="Stand is occupied")
 
