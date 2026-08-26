@@ -1,5 +1,9 @@
+from datetime import datetime, timezone
+
 from app.database import get_connection
-from fastapi import FastAPI
+from app.models import CheckInRequest
+from app.sessions import is_stand_occupied
+from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 
 app = FastAPI()
@@ -33,3 +37,28 @@ def list_map_features():
     rows = conn.execute("SELECT * FROM map_features").fetchall()
     conn.close()
     return rows
+
+
+@app.post("/api/hunts")
+def check_in(request: CheckInRequest):
+    conn = get_connection()
+    now = datetime.now(timezone.utc)
+
+    stand = conn.execute(
+        "SELECT * FROM stands WHERE id = ?", (request.stand_id,)
+    ).fetchone()
+
+    if stand is None:
+        raise HTTPException(status_code=404, detail="Stand not found")
+
+    if is_stand_occupied(conn, request.stand_id, now):
+        raise HTTPException(status_code=409, detail="Stand is occupied")
+
+    conn.execute(
+        "INSERT INTO hunts (stand_id, member_id, checked_in_at) VALUES (?, ?, ?)",
+        (request.stand_id, "member-1", now.isoformat()),
+    )
+    conn.commit()
+    conn.close()
+
+    return {"status": "checked in"}
