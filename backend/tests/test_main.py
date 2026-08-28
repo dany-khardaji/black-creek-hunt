@@ -1,24 +1,30 @@
 import sqlite3
 import threading
 
-import app.main as main_module
-from app.database import SCHEMA
-from app.main import app
-from fastapi.testclient import TestClient
+import app.main as main_module  # The module holding get_connection, so we can swap it out
+from app.database import SCHEMA  # CREATE TABLE statements, so test DBs match production
+from app.main import app  # The actual FastAPI app we're testing
+from fastapi.testclient import TestClient  # Lets us send fake HTTP requests to that app
 
 
+# Retired stand should be rejected with 409
 def test_retired_stand_rejected(monkeypatch):
+    # fake in-memory database for this test
     conn = sqlite3.connect(":memory:", check_same_thread=False)
     conn.row_factory = sqlite3.Row
     conn.executescript(SCHEMA)
+
+    # seed one retired stand
     conn.execute(
         "INSERT INTO stands (id, name, type, lat, lng, is_retired) VALUES (?, ?, ?, ?, ?, ?)",
         ("test-stand-1", "Test Stand 1", "ladder", 35.0, -78.0, 1),
     )
     conn.commit()
 
+    # make check_in use this fake db
     monkeypatch.setattr(main_module, "get_connection", lambda: conn)
 
+    # try to check in, expect rejection
     client = TestClient(app)
     response = client.post(
         "/api/hunts", json={"stand_id": "test-stand-1", "guests": []}
@@ -26,14 +32,19 @@ def test_retired_stand_rejected(monkeypatch):
     assert response.status_code == 409
 
 
+# Stand that was checked out should be checkable again
 def test_checkin_succeeds_after_checkout(monkeypatch):
     conn = sqlite3.connect(":memory:", check_same_thread=False)
     conn.row_factory = sqlite3.Row
     conn.executescript(SCHEMA)
+
+    # seed one open stand
     conn.execute(
         "INSERT INTO stands (id, name, type, lat, lng, is_retired) VALUES (?, ?, ?, ?, ?, ?)",
         ("test-stand-1", "Test Stand 1", "ladder", 35.0, -78.0, 0),
     )
+
+    # seed a hunt that already checked out
     conn.execute(
         "INSERT INTO hunts (stand_id, member_id, checked_in_at, checked_out_at) VALUES (?, ?, ?, ?)",
         (
@@ -47,6 +58,7 @@ def test_checkin_succeeds_after_checkout(monkeypatch):
 
     monkeypatch.setattr(main_module, "get_connection", lambda: conn)
 
+    # should succeed since old session is closed
     client = TestClient(app)
     response = client.post(
         "/api/hunts", json={"stand_id": "test-stand-1", "guests": []}
@@ -54,6 +66,7 @@ def test_checkin_succeeds_after_checkout(monkeypatch):
     assert response.status_code == 200
 
 
+# Two people check in at once, only one should win
 def test_concurrent_checkin_only_one_wins(monkeypatch):
     conn = sqlite3.connect(":memory:", check_same_thread=False)
     conn.row_factory = sqlite3.Row
@@ -68,6 +81,7 @@ def test_concurrent_checkin_only_one_wins(monkeypatch):
 
     results = []
 
+    # one hunter's check-in attempt
     def make_request():
         client = TestClient(app)
         response = client.post(
@@ -75,6 +89,7 @@ def test_concurrent_checkin_only_one_wins(monkeypatch):
         )
         results.append(response.status_code)
 
+    # two hunters, sent in at the same time
     thread1 = threading.Thread(target=make_request)
     thread2 = threading.Thread(target=make_request)
     thread1.start()
@@ -82,5 +97,6 @@ def test_concurrent_checkin_only_one_wins(monkeypatch):
     thread1.join()
     thread2.join()
 
+    # exactly one wins, one loses
     assert results.count(200) == 1
     assert results.count(409) == 1

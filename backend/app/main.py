@@ -8,7 +8,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 app = FastAPI()
 
-
+# Frontend addresses that are allowed to call this api
 origins = [
     "http://localhost:5500",
     "http://127.0.0.1:5500",
@@ -16,13 +16,14 @@ origins = [
 ]
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=origins,  # List of allowed origins
-    allow_credentials=True,  # Allow cookies and authentication headers
-    allow_methods=["*"],  # Allow all standard HTTP methods (GET, POST, etc.)
-    allow_headers=["*"],  # Allow all browser headers
+    allow_origins=origins,  # list of allowed origins
+    allow_credentials=True,  # allow cookies and authentication headers
+    allow_methods=["*"],  # allow all standard HTTP methods (GET, POST, etc.)
+    allow_headers=["*"],  # allow all browser headers
 )
 
 
+# Returns every stand in the database
 @app.get("/api/stands")
 def list_stands():
     conn = get_connection()
@@ -31,6 +32,7 @@ def list_stands():
     return rows
 
 
+# Returns every map feature (gates, parking, camp, etc.)
 @app.get("/api/map-features")
 def list_map_features():
     conn = get_connection()
@@ -39,11 +41,13 @@ def list_map_features():
     return rows
 
 
+# Handles a member checking into a stand
 @app.post("/api/hunts")
 def check_in(request: CheckInRequest):
     conn = get_connection()
     now = datetime.now(timezone.utc)
 
+    # look up the stand being checked into
     stand = conn.execute(
         "SELECT * FROM stands WHERE id = ?", (request.stand_id,)
     ).fetchone()
@@ -51,12 +55,15 @@ def check_in(request: CheckInRequest):
     if stand is None:
         raise HTTPException(status_code=404, detail="Stand not found")
 
+    # retired stands can never be checked into, occupied or not
     if stand["is_retired"]:
         raise HTTPException(status_code=409, detail="Stand is retired")
 
+    # someone else already has an active session on this stand
     if is_stand_occupied(conn, request.stand_id, now):
         raise HTTPException(status_code=409, detail="Stand is occupied")
 
+    # all checks passed, create the hunt row
     conn.execute(
         "INSERT INTO hunts (stand_id, member_id, checked_in_at) VALUES (?, ?, ?)",
         (request.stand_id, "member-1", now.isoformat()),

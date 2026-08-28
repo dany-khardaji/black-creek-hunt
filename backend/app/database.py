@@ -3,8 +3,9 @@ from pathlib import Path
 
 DB_PATH = (
     Path(__file__).parent.parent / "blackcreek.db"
-)  # points at backend/blackcreek.db no matter where you run
+)  # Points at backend/blackcreek.db no matter where you run
 
+# Table structure for the whole app
 SCHEMA = """
     CREATE TABLE IF NOT EXISTS stands (
         id TEXT PRIMARY KEY,
@@ -50,6 +51,7 @@ SCHEMA = """
 """
 
 
+# Opens a connection to the real database file, with settings the app needs
 def get_connection():
     conn = sqlite3.connect(DB_PATH)
     conn.execute("PRAGMA foreign_keys = ON")
@@ -57,6 +59,7 @@ def get_connection():
     return conn
 
 
+# Creates the tables if they don't already exist
 def init_db():
     conn = get_connection()
     conn.executescript(SCHEMA)

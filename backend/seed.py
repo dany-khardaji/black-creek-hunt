@@ -6,6 +6,7 @@ from app.database import get_connection
 STANDS = Path(__file__).parent.parent / "data" / "stands.json"
 FEATURES = Path(__file__).parent.parent / "data" / "map-features.json"
 
+# load the raw json files off disk
 with open(STANDS) as f:
     stands_data = json.load(f)
 with open(FEATURES) as f:
@@ -15,6 +16,8 @@ stands = stands_data["stands"]
 features = features_data["features"]
 
 conn = get_connection()
+
+# Insert or update every stand from the json into the database
 for stand in stands:
     conn.execute(
         """
@@ -28,10 +31,11 @@ for stand in stands:
             stand["lat"],
             stand["lng"],
             stand["capacity"],
-            json.dumps(stand["preferred_winds"]),
+            json.dumps(stand["preferred_winds"]),  # store the list as a json string
         ),
     )
 
+# Insert or update every map feature from the json into the database
 for feature in features:
     conn.execute(
         """
