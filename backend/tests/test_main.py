@@ -1,4 +1,5 @@
 import sqlite3
+import threading
 
 import app.main as main_module
 from app.database import SCHEMA
@@ -51,3 +52,35 @@ def test_checkin_succeeds_after_checkout(monkeypatch):
         "/api/hunts", json={"stand_id": "test-stand-1", "guests": []}
     )
     assert response.status_code == 200
+
+
+def test_concurrent_checkin_only_one_wins(monkeypatch):
+    conn = sqlite3.connect(":memory:", check_same_thread=False)
+    conn.row_factory = sqlite3.Row
+    conn.executescript(SCHEMA)
+    conn.execute(
+        "INSERT INTO stands (id, name, type, lat, lng, is_retired) VALUES (?, ?, ?, ?, ?, ?)",
+        ("test-stand-1", "Test Stand 1", "ladder", 35.0, -78.0, 0),
+    )
+    conn.commit()
+
+    monkeypatch.setattr(main_module, "get_connection", lambda: conn)
+
+    results = []
+
+    def make_request():
+        client = TestClient(app)
+        response = client.post(
+            "/api/hunts", json={"stand_id": "test-stand-1", "guests": []}
+        )
+        results.append(response.status_code)
+
+    thread1 = threading.Thread(target=make_request)
+    thread2 = threading.Thread(target=make_request)
+    thread1.start()
+    thread2.start()
+    thread1.join()
+    thread2.join()
+
+    assert results.count(200) == 1
+    assert results.count(409) == 1
