@@ -100,3 +100,19 @@ def test_concurrent_checkin_only_one_wins(monkeypatch):
     # exactly one wins, one loses
     assert results.count(200) == 1
     assert results.count(409) == 1
+
+
+def test_too_many_guests_rejected():
+    client = TestClient(app)
+    response = client.post(
+        "/api/hunts",
+        json={
+            "stand_id": "test-stand-1",
+            "guests": [
+                {"name": "A", "phone": "111", "stand_id": "stand-a"},
+                {"name": "B", "phone": "222", "stand_id": "stand-b"},
+                {"name": "C", "phone": "333", "stand_id": "stand-c"},
+            ],
+        },
+    )
+    assert response.status_code == 422
