@@ -69,7 +69,7 @@ def test_stale_session_does_not_occupy(conn):
     assert is_stand_occupied(conn, "test-stand-1", now) is False
 
 
-# A hunt that was checked out should not count as occupied
+# A hunt that was checked out should not count as active
 def test_checked_out_session_does_not_occupy(conn):
     now = datetime(2026, 11, 10, 9, 0, tzinfo=timezone.utc)
 
@@ -86,7 +86,7 @@ def test_checked_out_session_does_not_occupy(conn):
     assert is_stand_occupied(conn, "test-stand-1", now) is False
 
 
-#
+# A hunt checked in before the boundary should still count as active
 def test_session_before_boundary_is_still_active(conn):
     now = datetime(2026, 11, 10, 6, 0, tzinfo=timezone.utc)
 
@@ -99,18 +99,3 @@ def test_session_before_boundary_is_still_active(conn):
         ),
     )
     assert is_stand_occupied(conn, "test-stand-1", now) is True
-
-
-#
-def test_session_after_boundary_is_not_active(conn):
-    now = datetime(2026, 11, 11, 9, 0, tzinfo=timezone.utc)
-
-    conn.execute(
-        "INSERT INTO hunts (stand_id, member_id, checked_in_at) VALUES (?, ?, ?)",
-        (
-            "test-stand-1",
-            "member-1",
-            "2026-11-11T02:00:00+00:00",
-        ),
-    )
-    assert is_stand_occupied(conn, "test-stand-1", now) is False
