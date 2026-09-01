@@ -356,3 +356,58 @@ def test_checkin_with_two_guests_creates_three_rows(monkeypatch):
     assert len(rows) == 3
 
     os.remove(db_path)
+
+
+# One guest's stand is already occupied submission should be rejected, no rows written
+def test_checkin_guest_stand_occupied_rejects_all(monkeypatch):
+    db_path = "test_guest_rollback.db"
+
+    conn = sqlite3.connect(db_path, check_same_thread=False)
+    conn.row_factory = sqlite3.Row
+    conn.executescript(SCHEMA)
+
+    # seed two open stands, host + one guest stand
+    for stand_id in ["test-stand-1", "test-stand-2"]:
+        conn.execute(
+            "INSERT INTO stands (id, name, type, lat, lng, is_retired) VALUES (?, ?, ?, ?, ?, ?)",
+            (stand_id, stand_id, "ladder", 35.0, -78.0, 0),
+        )
+
+    # the guest's stand is ALREADY occupied by someone else
+    conn.execute(
+        "INSERT INTO hunts (stand_id, member_id, checked_in_at) VALUES (?, ?, ?)",
+        ("test-stand-2", "member-2", datetime.now(timezone.utc).isoformat()),
+    )
+    conn.commit()
+    conn.close()
+
+    def fake_get_connection():
+        c = sqlite3.connect(db_path, check_same_thread=False)
+        c.row_factory = sqlite3.Row
+        return c
+
+    monkeypatch.setattr(main_module, "get_connection", fake_get_connection)
+
+    client = TestClient(app)
+    response = client.post(
+        "/api/hunts",
+        json={
+            "stand_id": "test-stand-1",
+            "guests": [
+                {"name": "Guest A", "phone": "111", "stand_id": "test-stand-2"},
+            ],
+        },
+    )
+    assert response.status_code == 409
+
+    # confirm the host's row was NEVER written either
+    check_conn = sqlite3.connect(db_path, check_same_thread=False)
+    check_conn.row_factory = sqlite3.Row
+    rows = check_conn.execute(
+        "SELECT * FROM hunts WHERE stand_id = ?", ("test-stand-1",)
+    ).fetchall()
+    check_conn.close()
+
+    assert len(rows) == 0
+
+    os.remove(db_path)
