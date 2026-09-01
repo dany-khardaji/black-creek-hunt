@@ -70,18 +70,30 @@ def test_checkin_succeeds_after_checkout(monkeypatch):
 
 # Two people check in at once, only one should win
 def test_concurrent_checkin_only_one_wins(monkeypatch):
-    conn = sqlite3.connect(":memory:", check_same_thread=False)
+    db_path = "test_concurrent.db"
+
+    # real file on disk, so each thread can open its own independent connection
+    conn = sqlite3.connect(db_path, check_same_thread=False)
     conn.row_factory = sqlite3.Row
     conn.executescript(SCHEMA)
 
+    # seed one open stand
     conn.execute(
         "INSERT INTO stands (id, name, type, lat, lng, is_retired) VALUES (?, ?, ?, ?, ?, ?)",
         ("test-stand-1", "Test Stand 1", "ladder", 35.0, -78.0, 0),
     )
     conn.commit()
+    conn.close()
 
-    monkeypatch.setattr(main_module, "get_connection", lambda: conn)
+    # each call opens a fresh connection to the same file, mimicking real concurrent traffic
+    def fake_get_connection():
+        c = sqlite3.connect(db_path, check_same_thread=False)
+        c.row_factory = sqlite3.Row
+        return c
 
+    monkeypatch.setattr(main_module, "get_connection", fake_get_connection)
+
+    # shared list both threads report their result into
     results = []
 
     # one hunter's check-in attempt
@@ -103,6 +115,9 @@ def test_concurrent_checkin_only_one_wins(monkeypatch):
     # exactly one wins, one loses
     assert results.count(200) == 1
     assert results.count(409) == 1
+
+    # cleanup the temp db file
+    os.remove(db_path)
 
 
 # More than 2 guests should be rejected by the validator, no database needed

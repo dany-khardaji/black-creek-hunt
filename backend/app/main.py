@@ -47,20 +47,28 @@ def check_in(request: CheckInRequest):
     conn = get_connection()
     now = datetime.now(timezone.utc)
 
+    conn.execute("BEGIN IMMEDIATE")
+
     # look up the stand being checked into
     stand = conn.execute(
         "SELECT * FROM stands WHERE id = ?", (request.stand_id,)
     ).fetchone()
 
     if stand is None:
+        conn.rollback()
+        conn.close()
         raise HTTPException(status_code=404, detail="Stand not found")
 
     # retired stands can never be checked into, occupied or not
     if stand["is_retired"]:
+        conn.rollback()
+        conn.close()
         raise HTTPException(status_code=409, detail="Stand is retired")
 
     # someone else already has an active session on this stand
     if is_stand_occupied(conn, request.stand_id, now):
+        conn.rollback()
+        conn.close()
         raise HTTPException(status_code=409, detail="Stand is occupied")
 
     # all checks passed, create the hunt row
