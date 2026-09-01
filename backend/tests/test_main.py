@@ -1,3 +1,4 @@
+import os
 import sqlite3
 import threading
 from datetime import datetime, timedelta, timezone
@@ -154,8 +155,59 @@ def test_checkin_succeeds_when_only_session_is_stale(monkeypatch):
     assert response.status_code == 200
 
 
+# Checking out an open hunt should succeed and confirm the checkout time
 def test_checkout_succeeds(monkeypatch):
     conn = sqlite3.connect(":memory:", check_same_thread=False)
+    conn.row_factory = sqlite3.Row
+    conn.executescript(SCHEMA)
+
+    # seed one open, non-retired stand
+    conn.execute(
+        "INSERT INTO stands (id, name, type, lat, lng, is_retired) VALUES (?, ?, ?, ?, ?, ?)",
+        ("test-stand-1", "Test Stand 1", "ladder", 35.0, -78.0, 0),
+    )
+    # seed one open hunt (no checked_out_at yet)
+    conn.execute(
+        "INSERT INTO hunts (stand_id, member_id, checked_in_at) VALUES (?, ?, ?)",
+        ("test-stand-1", "member-1", datetime.now(timezone.utc).isoformat()),
+    )
+    conn.commit()
+
+    # point check_out() at this fake database
+    monkeypatch.setattr(main_module, "get_connection", lambda: conn)
+
+    # check out hunt id 1, should succeed
+    client = TestClient(app)
+    response = client.post("/api/hunts/1/check-out")
+
+    # confirm success and that a checkout time was actually returned
+    assert response.status_code == 200
+    data = response.json()
+    assert data["checked_out_at"] is not None
+
+
+# Checking out a hunt_id that doesn't exist should 404
+def test_checkout_nonexistent_hunt_rejected(monkeypatch):
+    conn = sqlite3.connect(":memory:", check_same_thread=False)
+    conn.row_factory = sqlite3.Row
+    conn.executescript(SCHEMA)
+    conn.commit()
+
+    # point check_out() at this fake, empty database
+    monkeypatch.setattr(main_module, "get_connection", lambda: conn)
+
+    # no hunt with id 999 exists, should 404
+    client = TestClient(app)
+    response = client.post("/api/hunts/999/check-out")
+
+    assert response.status_code == 404
+
+
+# Checking out an already-closed hunt should be rejected with 409
+def test_checkout_twice_rejected(monkeypatch):
+    db_path = "test_checkout_twice.db"
+
+    conn = sqlite3.connect(db_path, check_same_thread=False)
     conn.row_factory = sqlite3.Row
     conn.executescript(SCHEMA)
 
@@ -168,12 +220,21 @@ def test_checkout_succeeds(monkeypatch):
         ("test-stand-1", "member-1", datetime.now(timezone.utc).isoformat()),
     )
     conn.commit()
+    conn.close()
 
-    monkeypatch.setattr(main_module, "get_connection", lambda: conn)
+    def fake_get_connection():
+        c = sqlite3.connect(db_path, check_same_thread=False)
+        c.row_factory = sqlite3.Row
+        return c
+
+    monkeypatch.setattr(main_module, "get_connection", fake_get_connection)
 
     client = TestClient(app)
-    response = client.post("/api/hunts/1/check-out")
 
-    assert response.status_code == 200
-    data = response.json()
-    assert data["checked_out_at"] is not None
+    first_response = client.post("/api/hunts/1/check-out")
+    assert first_response.status_code == 200
+
+    second_response = client.post("/api/hunts/1/check-out")
+    assert second_response.status_code == 409
+
+    os.remove(db_path)
