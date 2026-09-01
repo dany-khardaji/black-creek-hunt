@@ -116,6 +116,22 @@ def check_out(hunt_id: int):
         "UPDATE hunts SET checked_out_at = ?, checkout_source = ? WHERE id = ?",
         (now.isoformat(), "member", hunt_id),
     )
+    conn.execute(
+        """
+        UPDATE hunts
+        SET checked_out_at = ?, checkout_source = ?
+        WHERE member_id = ?
+        AND checked_in_at = ?
+        AND guest_name IS NOT NULL
+        AND checked_out_at IS NULL
+        """,
+        (
+            now.isoformat(),
+            "member",
+            hunt["member_id"],
+            hunt["checked_in_at"],
+        ),
+    )
     conn.commit()
     conn.close()
 

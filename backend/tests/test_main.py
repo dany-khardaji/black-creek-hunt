@@ -448,3 +448,63 @@ def test_map_state_reflects_active_checkin(monkeypatch):
     assert stand_1["status"] == "active"
     assert stand_2["status"] == "open"
     assert data["live_count"] == 1
+
+
+# Checking out the host should also close any guest rows from the same check-in (used temp file for this)
+def test_checkout_cascades_to_guests(monkeypatch):
+    db_path = "test_cascade.db"
+
+    conn = sqlite3.connect(db_path, check_same_thread=False)
+    conn.row_factory = sqlite3.Row
+    conn.executescript(SCHEMA)
+
+    for stand_id in ["test-stand-1", "test-stand-2"]:
+        conn.execute(
+            "INSERT INTO stands (id, name, type, lat, lng, is_retired) VALUES (?, ?, ?, ?, ?, ?)",
+            (stand_id, stand_id, "ladder", 35.0, -78.0, 0),
+        )
+    conn.commit()
+    conn.close()
+
+    def fake_get_connection():
+        c = sqlite3.connect(db_path, check_same_thread=False)
+        c.row_factory = sqlite3.Row
+        return c
+
+    monkeypatch.setattr(main_module, "get_connection", fake_get_connection)
+    client = TestClient(app)
+
+    checkin_response = client.post(
+        "/api/hunts",
+        json={
+            "stand_id": "test-stand-1",
+            "guests": [
+                {"name": "Guest A", "phone": "111", "stand_id": "test-stand-2"},
+            ],
+        },
+    )
+    assert checkin_response.status_code == 200
+
+    # fresh connection to find the host's hunt id
+    check_conn = sqlite3.connect(db_path, check_same_thread=False)
+    check_conn.row_factory = sqlite3.Row
+    host_row = check_conn.execute(
+        "SELECT * FROM hunts WHERE stand_id = ? AND guest_name IS NULL",
+        ("test-stand-1",),
+    ).fetchone()
+    check_conn.close()
+
+    checkout_response = client.post(f"/api/hunts/{host_row['id']}/check-out")
+    assert checkout_response.status_code == 200
+
+    # another fresh connection to confirm the guest row closed too
+    final_conn = sqlite3.connect(db_path, check_same_thread=False)
+    final_conn.row_factory = sqlite3.Row
+    guest_row = final_conn.execute(
+        "SELECT * FROM hunts WHERE stand_id = ?", ("test-stand-2",)
+    ).fetchone()
+    final_conn.close()
+
+    assert guest_row["checked_out_at"] is not None
+
+    os.remove(db_path)
