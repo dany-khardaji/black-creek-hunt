@@ -72,3 +72,27 @@ def check_in(request: CheckInRequest):
     conn.close()
 
     return {"status": "checked in"}
+
+
+# Checks out a member's own hunt session
+@app.post("/api/hunts/{hunt_id}/check-out")
+def check_out(hunt_id: int):
+    conn = get_connection()
+    now = datetime.now(timezone.utc)
+
+    hunt = conn.execute("SELECT * FROM hunts WHERE id = ?", (hunt_id,)).fetchone()
+
+    if hunt is None:
+        raise HTTPException(status_code=404, detail="Hunt not found")
+
+    if hunt["checked_out_at"] is not None:
+        raise HTTPException(status_code=409, detail="Hunt already checked out")
+
+    conn.execute(
+        "UPDATE hunts SET checked_out_at = ?, checkout_source = ? WHERE id = ?",
+        (now.isoformat(), "member", hunt_id),
+    )
+    conn.commit()
+    conn.close()
+
+    return {"status": "checked out", "checked_out_at": now.isoformat()}

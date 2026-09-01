@@ -152,3 +152,28 @@ def test_checkin_succeeds_when_only_session_is_stale(monkeypatch):
         "/api/hunts", json={"stand_id": "test-stand-1", "guests": []}
     )
     assert response.status_code == 200
+
+
+def test_checkout_succeeds(monkeypatch):
+    conn = sqlite3.connect(":memory:", check_same_thread=False)
+    conn.row_factory = sqlite3.Row
+    conn.executescript(SCHEMA)
+
+    conn.execute(
+        "INSERT INTO stands (id, name, type, lat, lng, is_retired) VALUES (?, ?, ?, ?, ?, ?)",
+        ("test-stand-1", "Test Stand 1", "ladder", 35.0, -78.0, 0),
+    )
+    conn.execute(
+        "INSERT INTO hunts (stand_id, member_id, checked_in_at) VALUES (?, ?, ?)",
+        ("test-stand-1", "member-1", datetime.now(timezone.utc).isoformat()),
+    )
+    conn.commit()
+
+    monkeypatch.setattr(main_module, "get_connection", lambda: conn)
+
+    client = TestClient(app)
+    response = client.post("/api/hunts/1/check-out")
+
+    assert response.status_code == 200
+    data = response.json()
+    assert data["checked_out_at"] is not None
