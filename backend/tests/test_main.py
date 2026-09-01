@@ -1,5 +1,6 @@
 import sqlite3
 import threading
+from datetime import datetime, timedelta, timezone
 
 import app.main as main_module  # The module holding get_connection, so we can swap it out
 from app.database import SCHEMA  # CREATE TABLE statements, so test DBs match production
@@ -71,6 +72,7 @@ def test_concurrent_checkin_only_one_wins(monkeypatch):
     conn = sqlite3.connect(":memory:", check_same_thread=False)
     conn.row_factory = sqlite3.Row
     conn.executescript(SCHEMA)
+
     conn.execute(
         "INSERT INTO stands (id, name, type, lat, lng, is_retired) VALUES (?, ?, ?, ?, ?, ?)",
         ("test-stand-1", "Test Stand 1", "ladder", 35.0, -78.0, 0),
@@ -102,6 +104,7 @@ def test_concurrent_checkin_only_one_wins(monkeypatch):
     assert results.count(409) == 1
 
 
+# More than 2 guests should be rejected by the validator, no database needed
 def test_too_many_guests_rejected():
     client = TestClient(app)
     response = client.post(
@@ -116,3 +119,36 @@ def test_too_many_guests_rejected():
         },
     )
     assert response.status_code == 422
+
+
+# Session from 30 days ago, never checked out. Stale and should not block a new check-in
+def test_checkin_succeeds_when_only_session_is_stale(monkeypatch):
+    conn = sqlite3.connect(":memory:", check_same_thread=False)
+    conn.row_factory = sqlite3.Row
+    conn.executescript(SCHEMA)
+
+    # seed one normal, open stand
+    conn.execute(
+        "INSERT INTO stands (id, name, type, lat, lng, is_retired) VALUES (?, ?, ?, ?, ?, ?)",
+        ("test-stand-1", "Test Stand 1", "ladder", 35.0, -78.0, 0),
+    )
+
+    # 30 days ago, guaranteed stale no matter what day this test runs
+    stale_time = datetime.now(timezone.utc) - timedelta(days=30)
+
+    # this hunt was never checked out, just old and past the boundary
+    conn.execute(
+        "INSERT INTO hunts (stand_id, member_id, checked_in_at) VALUES (?, ?, ?)",
+        ("test-stand-1", "member-1", stale_time.isoformat()),
+    )
+    conn.commit()
+
+    # point check_in() at this fake database
+    monkeypatch.setattr(main_module, "get_connection", lambda: conn)
+
+    # a new check-in should succeed since the old session is stale
+    client = TestClient(app)
+    response = client.post(
+        "/api/hunts", json={"stand_id": "test-stand-1", "guests": []}
+    )
+    assert response.status_code == 200
