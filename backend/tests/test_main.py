@@ -203,18 +203,21 @@ def test_checkout_nonexistent_hunt_rejected(monkeypatch):
     assert response.status_code == 404
 
 
-# Checking out an already-closed hunt should be rejected with 409
+# Checking out an already-closed hunt should be rejected with 409 (used temp file for this)
 def test_checkout_twice_rejected(monkeypatch):
     db_path = "test_checkout_twice.db"
 
+    # real file on disk, so a new connection can reopen the same data
     conn = sqlite3.connect(db_path, check_same_thread=False)
     conn.row_factory = sqlite3.Row
     conn.executescript(SCHEMA)
 
+    # seed one open stand
     conn.execute(
         "INSERT INTO stands (id, name, type, lat, lng, is_retired) VALUES (?, ?, ?, ?, ?, ?)",
         ("test-stand-1", "Test Stand 1", "ladder", 35.0, -78.0, 0),
     )
+    # seed one open hunt
     conn.execute(
         "INSERT INTO hunts (stand_id, member_id, checked_in_at) VALUES (?, ?, ?)",
         ("test-stand-1", "member-1", datetime.now(timezone.utc).isoformat()),
@@ -222,6 +225,7 @@ def test_checkout_twice_rejected(monkeypatch):
     conn.commit()
     conn.close()
 
+    # each call opens a fresh connection to the same file, mimicking production
     def fake_get_connection():
         c = sqlite3.connect(db_path, check_same_thread=False)
         c.row_factory = sqlite3.Row
@@ -229,12 +233,63 @@ def test_checkout_twice_rejected(monkeypatch):
 
     monkeypatch.setattr(main_module, "get_connection", fake_get_connection)
 
+    # first check-out, should succeed
     client = TestClient(app)
-
     first_response = client.post("/api/hunts/1/check-out")
     assert first_response.status_code == 200
 
+    # second check-out on the same hunt, should be rejected
     second_response = client.post("/api/hunts/1/check-out")
     assert second_response.status_code == 409
 
+    # cleanup the temp db file
+    os.remove(db_path)
+
+
+# Second check-in attempt on an occupied stand should not touch the original row (used temp file for this)
+def test_second_checkin_does_not_overwrite_original(monkeypatch):
+    db_path = "test_second_checkin.db"
+
+    # real file on disk, so a fresh connection can reopen it after check_in closes its own
+    conn = sqlite3.connect(db_path, check_same_thread=False)
+    conn.row_factory = sqlite3.Row
+    conn.executescript(SCHEMA)
+
+    # seed one open stand
+    conn.execute(
+        "INSERT INTO stands (id, name, type, lat, lng, is_retired) VALUES (?, ?, ?, ?, ?, ?)",
+        ("test-stand-1", "Test Stand 1", "ladder", 35.0, -78.0, 0),
+    )
+    conn.commit()
+    conn.close()
+
+    # each call opens a fresh connection to the same file, mimicking production
+    def fake_get_connection():
+        c = sqlite3.connect(db_path, check_same_thread=False)
+        c.row_factory = sqlite3.Row
+        return c
+
+    monkeypatch.setattr(main_module, "get_connection", fake_get_connection)
+    client = TestClient(app)
+
+    # first check-in, should succeed
+    first = client.post("/api/hunts", json={"stand_id": "test-stand-1", "guests": []})
+    assert first.status_code == 200
+
+    # second check-in on the same stand, should be rejected
+    second = client.post("/api/hunts", json={"stand_id": "test-stand-1", "guests": []})
+    assert second.status_code == 409
+
+    # open a fresh connection to check the final state
+    check_conn = sqlite3.connect(db_path, check_same_thread=False)
+    check_conn.row_factory = sqlite3.Row
+    rows = check_conn.execute(
+        "SELECT * FROM hunts WHERE stand_id = ?", ("test-stand-1",)
+    ).fetchall()
+    check_conn.close()
+
+    # only one row should exist, proving the original was never touched or duplicated
+    assert len(rows) == 1
+
+    # cleanup the temp db file
     os.remove(db_path)
