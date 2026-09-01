@@ -411,3 +411,40 @@ def test_checkin_guest_stand_occupied_rejects_all(monkeypatch):
     assert len(rows) == 0
 
     os.remove(db_path)
+
+
+# map-state should show an occupied stand as active, others as open, with correct live count
+def test_map_state_reflects_active_checkin(monkeypatch):
+    conn = sqlite3.connect(":memory:", check_same_thread=False)
+    conn.row_factory = sqlite3.Row
+    conn.executescript(SCHEMA)
+
+    # seed two open stands
+    for stand_id in ["test-stand-1", "test-stand-2"]:
+        conn.execute(
+            "INSERT INTO stands (id, name, type, lat, lng, is_retired) VALUES (?, ?, ?, ?, ?, ?)",
+            (stand_id, stand_id, "ladder", 35.0, -78.0, 0),
+        )
+
+    # only stand-1 has an active hunt
+    conn.execute(
+        "INSERT INTO hunts (stand_id, member_id, checked_in_at) VALUES (?, ?, ?)",
+        ("test-stand-1", "member-1", datetime.now(timezone.utc).isoformat()),
+    )
+    conn.commit()
+
+    # point get_map_state() at this fake database
+    monkeypatch.setattr(main_module, "get_connection", lambda: conn)
+
+    client = TestClient(app)
+    response = client.get("/api/map-state")
+    data = response.json()
+
+    # find each stand in the returned list by id, since order isn't guaranteed
+    stand_1 = next(s for s in data["stands"] if s["id"] == "test-stand-1")
+    stand_2 = next(s for s in data["stands"] if s["id"] == "test-stand-2")
+
+    # stand-1 should be active, stand-2 should still be open
+    assert stand_1["status"] == "active"
+    assert stand_2["status"] == "open"
+    assert data["live_count"] == 1
