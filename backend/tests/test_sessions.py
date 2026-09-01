@@ -99,3 +99,14 @@ def test_session_before_boundary_is_still_active(conn):
         ),
     )
     assert is_stand_occupied(conn, "test-stand-1", now) is True
+
+
+# Boundary should stay correct across the DST switch
+def test_boundary_handles_dst_fall_back():
+    # 9am Eastern, Nov 2 (after DST ends, EST = UTC-5)
+    now = datetime(2026, 11, 2, 14, 0, tzinfo=timezone.utc)
+
+    # 3am Eastern, same day, converted to UTC
+    expected = datetime(2026, 11, 2, 8, 0, tzinfo=timezone.utc)
+
+    assert session_boundary(now) == expected
