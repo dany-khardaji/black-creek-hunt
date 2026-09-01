@@ -71,11 +71,27 @@ def check_in(request: CheckInRequest):
         conn.close()
         raise HTTPException(status_code=409, detail="Stand is occupied")
 
-    # all checks passed, create the hunt row
+    # check occupancy for every guest stand too, before inserting anything
+    for guest in request.guests:
+        if is_stand_occupied(conn, guest.stand_id, now):
+            conn.rollback()
+            conn.close()
+            raise HTTPException(
+                status_code=409,
+                detail=f"Guest stand {guest.stand_id} is occupied",
+            )
+
+    # all checks passed, create hunt host row
     conn.execute(
         "INSERT INTO hunts (stand_id, member_id, checked_in_at) VALUES (?, ?, ?)",
         (request.stand_id, "member-1", now.isoformat()),
     )
+    # all checks passed, create guest row
+    for guest in request.guests:
+        conn.execute(
+            "INSERT INTO hunts (stand_id, member_id, checked_in_at, guest_name, guest_phone) VALUES (?, ?, ?, ?, ?)",
+            (guest.stand_id, "member-1", now.isoformat(), guest.name, guest.phone),
+        )
     conn.commit()
     conn.close()
 

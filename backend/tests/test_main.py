@@ -308,3 +308,51 @@ def test_second_checkin_does_not_overwrite_original(monkeypatch):
 
     # cleanup the temp db file
     os.remove(db_path)
+
+
+# Host with two guests should create 3 rows total (used temp file for this)
+def test_checkin_with_two_guests_creates_three_rows(monkeypatch):
+    db_path = "test_two_guests.db"
+
+    conn = sqlite3.connect(db_path, check_same_thread=False)
+    conn.row_factory = sqlite3.Row
+    conn.executescript(SCHEMA)
+
+    # seed three open stands: host + 2 guest stands
+    for stand_id in ["test-stand-1", "test-stand-2", "test-stand-3"]:
+        conn.execute(
+            "INSERT INTO stands (id, name, type, lat, lng, is_retired) VALUES (?, ?, ?, ?, ?, ?)",
+            (stand_id, stand_id, "ladder", 35.0, -78.0, 0),
+        )
+    conn.commit()
+    conn.close()
+
+    def fake_get_connection():
+        c = sqlite3.connect(db_path, check_same_thread=False)
+        c.row_factory = sqlite3.Row
+        return c
+
+    monkeypatch.setattr(main_module, "get_connection", fake_get_connection)
+
+    client = TestClient(app)
+    response = client.post(
+        "/api/hunts",
+        json={
+            "stand_id": "test-stand-1",
+            "guests": [
+                {"name": "Guest A", "phone": "111", "stand_id": "test-stand-2"},
+                {"name": "Guest B", "phone": "222", "stand_id": "test-stand-3"},
+            ],
+        },
+    )
+    assert response.status_code == 200
+
+    # open a fresh connection to check the final state
+    check_conn = sqlite3.connect(db_path, check_same_thread=False)
+    check_conn.row_factory = sqlite3.Row
+    rows = check_conn.execute("SELECT * FROM hunts").fetchall()
+    check_conn.close()
+
+    assert len(rows) == 3
+
+    os.remove(db_path)
