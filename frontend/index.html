@@ -33,9 +33,10 @@
     <div id="panel">
       <button id="panel-close">Close</button>
       <h2 id="panel-name"></h2>
+      <div id="panel-status"></div>
     </div>
     <script>
-      const API_URL = "http://192.168.50.75:8000";
+      const API_URL = "http://localhost:8000";
       const map = L.map("map");
       map.setView([35.645, -78.442], 15);
       L.tileLayer(
@@ -44,17 +45,17 @@
       ).addTo(map);
 
       async function loadStands() {
-        const response = await fetch(`${API_URL}/api/stands`);
+        const response = await fetch(`${API_URL}/api/map-state`);
         const data = await response.json();
 
-        for (const stand of data) {
+        for (const stand of data.stands) {
           const marker = L.marker([stand.lat, stand.lng]).addTo(map);
           marker.on("click", () => openPanel(stand));
         }
 
         const params = new URLSearchParams(location.search);
         const standId = params.get("stand");
-        const stand = data.find((s) => s.id === standId);
+        const stand = data.stands.find((s) => s.id === standId);
 
         if (stand) {
           openPanel(stand);
@@ -78,6 +79,29 @@
 
       function openPanel(stand) {
         document.getElementById("panel-name").textContent = stand.name;
+
+        const statusDiv = document.getElementById("panel-status");
+
+        if (stand.status === "open") {
+          statusDiv.innerHTML = "<button>Check In</button>";
+          const checkInButton = statusDiv.querySelector("button");
+
+          checkInButton.addEventListener("click", async () => {
+            const response = await fetch(`${API_URL}/api/hunts`, {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ stand_id: stand.id, guests: [] }),
+            });
+
+            if (response.ok) {
+              closePanel();
+              loadStands();
+            }
+          });
+        } else {
+          statusDiv.innerHTML = `Occupied by ${stand.occupied_by}`;
+        }
+
         document.getElementById("panel").classList.add("open");
         history.pushState({}, "", `?stand=${stand.id}`);
       }
