@@ -30,13 +30,18 @@
   <body>
     <h1>Stands</h1>
     <div id="map"></div>
+    <div id="live-count"></div>
+
+    <!-- content filled in dynamically by openPanel() -->
     <div id="panel">
       <button id="panel-close">Close</button>
       <h2 id="panel-name"></h2>
       <div id="panel-status"></div>
     </div>
+
     <script>
       const API_URL = "http://localhost:8000";
+
       const map = L.map("map");
       map.setView([35.645, -78.442], 15);
       L.tileLayer(
@@ -48,11 +53,15 @@
         const response = await fetch(`${API_URL}/api/map-state`);
         const data = await response.json();
 
+        document.getElementById("live-count").textContent =
+          `${data.live_count} hunters on the property`;
+
         for (const stand of data.stands) {
           const marker = L.marker([stand.lat, stand.lng]).addTo(map);
           marker.on("click", () => openPanel(stand));
         }
 
+        // reopen panel on load if the URL already has a stand selected
         const params = new URLSearchParams(location.search);
         const standId = params.get("stand");
         const stand = data.stands.find((s) => s.id === standId);
@@ -84,6 +93,8 @@
 
         if (stand.status === "open") {
           statusDiv.innerHTML = "<button>Check In</button>";
+
+          // rebuilt every time, so re-find and re-attach each time
           const checkInButton = statusDiv.querySelector("button");
 
           checkInButton.addEventListener("click", async () => {
@@ -95,7 +106,7 @@
 
             if (response.ok) {
               closePanel();
-              loadStands();
+              loadStands(); // no auto-refresh, must reload manually
             }
           });
         } else {
@@ -109,6 +120,7 @@
       function closePanel() {
         document.getElementById("panel").classList.remove("open");
       }
+
       document
         .getElementById("panel-close")
         .addEventListener("click", closePanel);
