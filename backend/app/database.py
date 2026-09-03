@@ -40,15 +40,51 @@ SCHEMA = """
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         stand_id TEXT NOT NULL,
         member_id TEXT NOT NULL,
+        host_hunt_id INTEGER,
         checked_in_at TEXT NOT NULL,
         checked_out_at TEXT,
         checkout_source TEXT CHECK (checkout_source IS NULL OR checkout_source IN ('auto', 'member')),
         guest_name TEXT,
         guest_phone TEXT,
         FOREIGN KEY (stand_id) REFERENCES stands(id),
-        FOREIGN KEY (member_id) REFERENCES members(id)
+        FOREIGN KEY (member_id) REFERENCES members(id),
+        FOREIGN KEY (host_hunt_id) REFERENCES hunts(id)
     );
 """
+
+
+def ensure_current_schema(conn):
+    """Apply the small local migration needed by the current development schema."""
+    hunt_columns = {
+        row["name"] for row in conn.execute("PRAGMA table_info(hunts)").fetchall()
+    }
+
+    if hunt_columns and "host_hunt_id" not in hunt_columns:
+        conn.execute(
+            "ALTER TABLE hunts ADD COLUMN host_hunt_id INTEGER REFERENCES hunts(id)"
+        )
+        conn.execute(
+            """
+            UPDATE hunts AS guest
+            SET host_hunt_id = (
+                SELECT host.id
+                FROM hunts AS host
+                WHERE host.member_id = guest.member_id
+                AND host.checked_in_at = guest.checked_in_at
+                AND host.guest_name IS NULL
+                ORDER BY host.id
+                LIMIT 1
+            )
+            WHERE guest.guest_name IS NOT NULL
+            AND guest.host_hunt_id IS NULL
+            """
+        )
+
+    if hunt_columns:
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_hunts_host_hunt_id ON hunts(host_hunt_id)"
+        )
+        conn.commit()
 
 
 # Opens a connection to the real database file, with settings the app needs
@@ -56,6 +92,7 @@ def get_connection():
     conn = sqlite3.connect(DB_PATH)
     conn.execute("PRAGMA foreign_keys = ON")
     conn.row_factory = sqlite3.Row
+    ensure_current_schema(conn)
     return conn
 
 
@@ -63,5 +100,6 @@ def get_connection():
 def init_db():
     conn = get_connection()
     conn.executescript(SCHEMA)
+    ensure_current_schema(conn)
     conn.commit()
     conn.close()

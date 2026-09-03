@@ -4,6 +4,7 @@ import threading
 from datetime import datetime, timedelta, timezone
 
 import app.main as main_module  # The module holding get_connection, so we can swap it out
+import pytest
 from app.database import SCHEMA  # CREATE TABLE statements, so test DBs match production
 from app.main import app  # The actual FastAPI app we're testing
 from fastapi.testclient import TestClient  # Lets us send fake HTTP requests to that app
@@ -506,5 +507,295 @@ def test_checkout_cascades_to_guests(monkeypatch):
     final_conn.close()
 
     assert guest_row["checked_out_at"] is not None
+    assert guest_row["host_hunt_id"] == host_row["id"]
 
     os.remove(db_path)
+
+
+@pytest.mark.parametrize("field", ["name", "phone"])
+def test_blank_guest_fields_rejected(field):
+    guest = {"name": "Guest A", "phone": "555-0100", "stand_id": "stand-2"}
+    guest[field] = "   "
+
+    response = TestClient(app).post(
+        "/api/hunts",
+        json={"stand_id": "stand-1", "guests": [guest]},
+    )
+
+    assert response.status_code == 422
+
+
+def test_guest_cannot_use_host_stand():
+    response = TestClient(app).post(
+        "/api/hunts",
+        json={
+            "stand_id": "stand-1",
+            "guests": [
+                {"name": "Guest A", "phone": "555-0100", "stand_id": "stand-1"}
+            ],
+        },
+    )
+
+    assert response.status_code == 422
+
+
+def test_two_guests_cannot_share_a_stand():
+    response = TestClient(app).post(
+        "/api/hunts",
+        json={
+            "stand_id": "stand-1",
+            "guests": [
+                {"name": "Guest A", "phone": "555-0100", "stand_id": "stand-2"},
+                {"name": "Guest B", "phone": "555-0101", "stand_id": "stand-2"},
+            ],
+        },
+    )
+
+    assert response.status_code == 422
+
+
+def test_nonexistent_guest_stand_rejected(monkeypatch):
+    conn = sqlite3.connect(":memory:", check_same_thread=False)
+    conn.row_factory = sqlite3.Row
+    conn.executescript(SCHEMA)
+    conn.execute(
+        "INSERT INTO stands (id, name, type, lat, lng) VALUES (?, ?, ?, ?, ?)",
+        ("stand-1", "Host Stand", "ladder", 35.0, -78.0),
+    )
+    conn.commit()
+    monkeypatch.setattr(main_module, "get_connection", lambda: conn)
+
+    response = TestClient(app).post(
+        "/api/hunts",
+        json={
+            "stand_id": "stand-1",
+            "guests": [
+                {"name": "Guest A", "phone": "555-0100", "stand_id": "missing"}
+            ],
+        },
+    )
+
+    assert response.status_code == 404
+    assert response.json()["detail"]["code"] == "stand_not_found"
+    assert response.json()["detail"]["stand_id"] == "missing"
+
+
+def test_retired_guest_stand_rejected(monkeypatch):
+    conn = sqlite3.connect(":memory:", check_same_thread=False)
+    conn.row_factory = sqlite3.Row
+    conn.executescript(SCHEMA)
+    conn.executemany(
+        "INSERT INTO stands (id, name, type, lat, lng, is_retired) VALUES (?, ?, ?, ?, ?, ?)",
+        [
+            ("stand-1", "Host Stand", "ladder", 35.0, -78.0, 0),
+            ("stand-2", "Retired Stand", "ladder", 35.1, -78.1, 1),
+        ],
+    )
+    conn.commit()
+    monkeypatch.setattr(main_module, "get_connection", lambda: conn)
+
+    response = TestClient(app).post(
+        "/api/hunts",
+        json={
+            "stand_id": "stand-1",
+            "guests": [
+                {"name": "Guest A", "phone": "555-0100", "stand_id": "stand-2"}
+            ],
+        },
+    )
+
+    assert response.status_code == 409
+    assert response.json()["detail"]["code"] == "stand_retired"
+    assert response.json()["detail"]["stand_name"] == "Retired Stand"
+
+
+def test_checkin_conflict_identifies_taken_stand(monkeypatch):
+    conn = sqlite3.connect(":memory:", check_same_thread=False)
+    conn.row_factory = sqlite3.Row
+    conn.executescript(SCHEMA)
+    conn.execute(
+        "INSERT INTO stands (id, name, type, lat, lng) VALUES (?, ?, ?, ?, ?)",
+        ("stand-1", "Ridge Stand", "ladder", 35.0, -78.0),
+    )
+    conn.execute(
+        "INSERT INTO hunts (stand_id, member_id, checked_in_at) VALUES (?, ?, ?)",
+        ("stand-1", "member-2", datetime.now(timezone.utc).isoformat()),
+    )
+    conn.commit()
+    monkeypatch.setattr(main_module, "get_connection", lambda: conn)
+
+    response = TestClient(app).post(
+        "/api/hunts", json={"stand_id": "stand-1", "guests": []}
+    )
+
+    assert response.status_code == 409
+    assert response.json()["detail"] == {
+        "code": "stand_occupied",
+        "message": "Ridge Stand is occupied",
+        "stand_id": "stand-1",
+        "stand_name": "Ridge Stand",
+    }
+
+
+def test_checkout_someone_elses_hunt_rejected(monkeypatch):
+    conn = sqlite3.connect(":memory:", check_same_thread=False)
+    conn.row_factory = sqlite3.Row
+    conn.executescript(SCHEMA)
+    conn.execute(
+        "INSERT INTO hunts (stand_id, member_id, checked_in_at) VALUES (?, ?, ?)",
+        ("stand-1", "member-2", datetime.now(timezone.utc).isoformat()),
+    )
+    conn.commit()
+    monkeypatch.setattr(main_module, "get_connection", lambda: conn)
+
+    response = TestClient(app).post("/api/hunts/1/check-out")
+
+    assert response.status_code == 403
+    assert response.json()["detail"]["code"] == "checkout_forbidden"
+
+
+def test_stale_hunt_cannot_be_checked_out(monkeypatch):
+    conn = sqlite3.connect(":memory:", check_same_thread=False)
+    conn.row_factory = sqlite3.Row
+    conn.executescript(SCHEMA)
+    stale_time = datetime.now(timezone.utc) - timedelta(days=2)
+    conn.execute(
+        "INSERT INTO hunts (stand_id, member_id, checked_in_at) VALUES (?, ?, ?)",
+        ("stand-1", "member-1", stale_time.isoformat()),
+    )
+    conn.commit()
+    monkeypatch.setattr(main_module, "get_connection", lambda: conn)
+
+    response = TestClient(app).post("/api/hunts/1/check-out")
+
+    assert response.status_code == 409
+    assert response.json()["detail"]["code"] == "hunt_not_active"
+
+
+def test_map_state_marks_long_hunt_overdue(monkeypatch):
+    now = datetime(2026, 11, 10, 18, 0, tzinfo=timezone.utc)
+    conn = sqlite3.connect(":memory:", check_same_thread=False)
+    conn.row_factory = sqlite3.Row
+    conn.executescript(SCHEMA)
+    conn.execute(
+        "INSERT INTO stands (id, name, type, lat, lng) VALUES (?, ?, ?, ?, ?)",
+        ("stand-1", "Long Sit", "box", 35.0, -78.0),
+    )
+    conn.execute(
+        "INSERT INTO hunts (stand_id, member_id, checked_in_at) VALUES (?, ?, ?)",
+        (
+            "stand-1",
+            "member-2",
+            (now - timedelta(hours=9)).isoformat(),
+        ),
+    )
+    conn.commit()
+    monkeypatch.setattr(main_module, "get_connection", lambda: conn)
+    monkeypatch.setattr(main_module, "utc_now", lambda: now)
+
+    response = TestClient(app).get("/api/map-state")
+    stand = response.json()["stands"][0]
+
+    assert response.status_code == 200
+    assert stand["status"] == "overdue"
+    assert stand["occupant_type"] == "member"
+    assert stand["occupant_initials"] == "M"
+
+
+def test_map_state_hides_stale_hunt(monkeypatch):
+    now = datetime(2026, 11, 10, 17, 0, tzinfo=timezone.utc)
+    conn = sqlite3.connect(":memory:", check_same_thread=False)
+    conn.row_factory = sqlite3.Row
+    conn.executescript(SCHEMA)
+    conn.execute(
+        "INSERT INTO stands (id, name, type, lat, lng) VALUES (?, ?, ?, ?, ?)",
+        ("stand-1", "Old Sit", "ground", 35.0, -78.0),
+    )
+    conn.execute(
+        "INSERT INTO hunts (stand_id, member_id, checked_in_at) VALUES (?, ?, ?)",
+        (
+            "stand-1",
+            "member-2",
+            (now - timedelta(days=2)).isoformat(),
+        ),
+    )
+    conn.commit()
+    monkeypatch.setattr(main_module, "get_connection", lambda: conn)
+    monkeypatch.setattr(main_module, "utc_now", lambda: now)
+
+    response = TestClient(app).get("/api/map-state")
+    data = response.json()
+
+    assert data["stands"][0]["status"] == "open"
+    assert data["stands"][0]["occupied_by"] is None
+    assert data["live_count"] == 0
+
+
+def test_map_state_returns_safe_host_and_guest_details(monkeypatch):
+    now = datetime(2026, 11, 10, 17, 0, tzinfo=timezone.utc)
+    conn = sqlite3.connect(":memory:", check_same_thread=False)
+    conn.row_factory = sqlite3.Row
+    conn.executescript(SCHEMA)
+    conn.execute(
+        """
+        INSERT INTO members (
+            id, email, password_hash, first_name, last_name, created_at
+        ) VALUES (?, ?, ?, ?, ?, ?)
+        """,
+        (
+            "member-1",
+            "mike@example.com",
+            "not-a-real-hash",
+            "Mike",
+            "Doe",
+            now.isoformat(),
+        ),
+    )
+    conn.executemany(
+        "INSERT INTO stands (id, name, type, lat, lng) VALUES (?, ?, ?, ?, ?)",
+        [
+            ("stand-1", "Host Stand", "ladder", 35.0, -78.0),
+            ("stand-2", "Guest Stand", "box", 35.1, -78.1),
+        ],
+    )
+    host_cursor = conn.execute(
+        "INSERT INTO hunts (stand_id, member_id, checked_in_at) VALUES (?, ?, ?)",
+        ("stand-1", "member-1", (now - timedelta(hours=1)).isoformat()),
+    )
+    conn.execute(
+        """
+        INSERT INTO hunts (
+            stand_id, member_id, host_hunt_id, checked_in_at,
+            guest_name, guest_phone
+        ) VALUES (?, ?, ?, ?, ?, ?)
+        """,
+        (
+            "stand-2",
+            "member-1",
+            host_cursor.lastrowid,
+            (now - timedelta(hours=1)).isoformat(),
+            "Jane Smith",
+            "555-0100",
+        ),
+    )
+    conn.commit()
+    monkeypatch.setattr(main_module, "get_connection", lambda: conn)
+    monkeypatch.setattr(main_module, "utc_now", lambda: now)
+
+    response = TestClient(app).get("/api/map-state")
+    data = response.json()
+    host = next(stand for stand in data["stands"] if stand["id"] == "stand-1")
+    guest = next(stand for stand in data["stands"] if stand["id"] == "stand-2")
+
+    assert host["occupied_by"] == "Mike D."
+    assert host["occupant_initials"] == "MD"
+    assert host["occupant_type"] == "member"
+    assert host["can_check_out"] is True
+    assert host["hunt_id"] == host_cursor.lastrowid
+    assert guest["occupied_by"] == "Jane Smith"
+    assert guest["occupant_initials"] == "JS"
+    assert guest["occupant_type"] == "guest"
+    assert guest["guest_of"] == "Mike D."
+    assert guest["can_check_out"] is False
+    assert "guest_phone" not in guest
+    assert data["live_count"] == 2

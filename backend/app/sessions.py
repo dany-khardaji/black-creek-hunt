@@ -3,6 +3,7 @@ from zoneinfo import ZoneInfo
 
 CLUB_TZ = ZoneInfo("America/New_York")  # Clubs timezone
 RESET_HOUR = 3  # Sessions reset at 3am local time, not midnight
+OVERDUE_AFTER = timedelta(hours=8)
 
 
 # Figures out "today's 3am" boundary, in UTC, based on the current time
@@ -42,3 +43,11 @@ def is_stand_occupied(conn, stand_id, now_utc):
 
     # true if a matching row was found, false if not
     return row is not None
+
+
+def is_hunt_overdue(checked_in_at, now_utc):
+    """Return True once an active hunt has lasted at least eight hours."""
+    if isinstance(checked_in_at, str):
+        checked_in_at = datetime.fromisoformat(checked_in_at)
+
+    return now_utc - checked_in_at >= OVERDUE_AFTER
