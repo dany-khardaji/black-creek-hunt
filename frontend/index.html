@@ -57,7 +57,16 @@
           `${data.live_count} hunters on the property`;
 
         for (const stand of data.stands) {
-          const marker = L.marker([stand.lat, stand.lng]).addTo(map);
+          const color = stand.status === "open" ? "gray" : "orange";
+
+          const marker = L.circleMarker([stand.lat, stand.lng], {
+            radius: 8,
+            color: "black",
+            weight: 1,
+            fillColor: color,
+            fillOpacity: 1,
+          }).addTo(map);
+
           marker.on("click", () => openPanel(stand));
         }
 
