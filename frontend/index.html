@@ -1,144 +1,61 @@
 <!doctype html>
-<html>
+<html lang="en">
   <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>Black Creek Hunt</title>
     <link
       rel="stylesheet"
       href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
     />
     <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
-    <style>
-      #map {
-        height: 100vh;
-      }
-      #panel {
-        position: absolute;
-        top: 0;
-        right: 0;
-        width: 300px;
-        height: 100vh;
-        background: white;
-        z-index: 1000;
-        padding: 16px;
-        display: none;
-      }
-      #panel.open {
-        display: block;
-      }
-    </style>
+    <link rel="stylesheet" href="./styles.css" />
   </head>
   <body>
-    <h1>Stands</h1>
-    <div id="map"></div>
-    <div id="live-count"></div>
+    <header class="top-bar">
+      <h1>Black Creek Hunt</h1>
+      <p id="live-count" aria-live="polite">Loading live count…</p>
+    </header>
 
-    <!-- content filled in dynamically by openPanel() -->
-    <div id="panel">
-      <button id="panel-close">Close</button>
-      <h2 id="panel-name"></h2>
+    <main>
+      <div id="map" aria-label="Interactive map of hunting stands"></div>
+      <p id="app-message" role="status" aria-live="polite">Loading map…</p>
+
+      <div class="legend" aria-label="Stand status legend">
+        <span><i style="--marker-color: var(--open)"></i>Open</span>
+        <span><i style="--marker-color: var(--active)"></i>Active</span>
+        <span><i style="--marker-color: var(--overdue)"></i>Overdue</span>
+      </div>
+    </main>
+
+    <aside id="panel" aria-labelledby="panel-name" aria-hidden="true">
+      <div class="panel-header">
+        <h2 id="panel-name" tabindex="-1"></h2>
+        <button id="panel-close" type="button" aria-label="Close stand panel">
+          Close
+        </button>
+      </div>
+
       <div id="panel-status"></div>
-    </div>
 
-    <script>
-      const API_URL = "http://localhost:8000";
+      <form id="check-in-form" novalidate hidden>
+        <fieldset>
+          <legend>Check in</legend>
+          <p class="form-help">
+            Add up to two guests. Each person must use a different open stand.
+          </p>
+          <div id="guest-fields"></div>
+          <div class="form-actions">
+            <button id="add-guest" type="button">Add guest</button>
+            <button class="primary-action" type="submit">Check in</button>
+          </div>
+        </fieldset>
+      </form>
 
-      const map = L.map("map");
-      map.setView([35.645, -78.442], 15);
-      L.tileLayer(
-        "https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}",
-        { attribution: "Esri", maxZoom: 19 },
-      ).addTo(map);
+      <button id="check-out-button" type="button" hidden>Check out</button>
+      <p id="panel-message" role="status" aria-live="polite"></p>
+    </aside>
 
-      async function loadStands() {
-        const response = await fetch(`${API_URL}/api/map-state`);
-        const data = await response.json();
-
-        document.getElementById("live-count").textContent =
-          `${data.live_count} hunters on the property`;
-
-        for (const stand of data.stands) {
-          const color = stand.status === "open" ? "gray" : "orange";
-
-          const marker = L.circleMarker([stand.lat, stand.lng], {
-            radius: 8,
-            color: "black",
-            weight: 1,
-            fillColor: color,
-            fillOpacity: 1,
-          }).addTo(map);
-
-          marker.on("click", () => openPanel(stand));
-        }
-
-        // reopen panel on load if the URL already has a stand selected
-        const params = new URLSearchParams(location.search);
-        const standId = params.get("stand");
-        const stand = data.stands.find((s) => s.id === standId);
-
-        if (stand) {
-          openPanel(stand);
-        }
-      }
-
-      async function loadMapFeatures() {
-        const response = await fetch(`${API_URL}/api/map-features`);
-        const data = await response.json();
-
-        for (const feature of data) {
-          L.circleMarker([feature.lat, feature.lng], {
-            radius: 6,
-            color: "white",
-            weight: 2,
-            fillColor: "black",
-            fillOpacity: 1,
-          }).addTo(map);
-        }
-      }
-
-      function openPanel(stand) {
-        document.getElementById("panel-name").textContent = stand.name;
-
-        const statusDiv = document.getElementById("panel-status");
-
-        if (stand.status === "open") {
-          statusDiv.innerHTML = "<button>Check In</button>";
-
-          // rebuilt every time, so re-find and re-attach each time
-          const checkInButton = statusDiv.querySelector("button");
-
-          checkInButton.addEventListener("click", async () => {
-            const response = await fetch(`${API_URL}/api/hunts`, {
-              method: "POST",
-              headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({ stand_id: stand.id, guests: [] }),
-            });
-
-            if (response.ok) {
-              closePanel();
-              loadStands(); // no auto-refresh, must reload manually
-            }
-          });
-        } else {
-          statusDiv.innerHTML = `Occupied by ${stand.occupied_by}`;
-        }
-
-        document.getElementById("panel").classList.add("open");
-        history.pushState({}, "", `?stand=${stand.id}`);
-      }
-
-      function closePanel() {
-        document.getElementById("panel").classList.remove("open");
-        history.pushState({}, "", location.pathname);
-      }
-
-      document
-        .getElementById("panel-close")
-        .addEventListener("click", closePanel);
-
-      loadStands();
-      loadMapFeatures();
-
-      setInterval(loadStands, 30000);
-    </script>
+    <script src="./app.js"></script>
   </body>
 </html>
