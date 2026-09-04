@@ -55,9 +55,17 @@ SCHEMA = """
 
 def ensure_current_schema(conn):
     """Apply the small local migration needed by the current development schema."""
+    stand_columns = {
+        row["name"] for row in conn.execute("PRAGMA table_info(stands)").fetchall()
+    }
     hunt_columns = {
         row["name"] for row in conn.execute("PRAGMA table_info(hunts)").fetchall()
     }
+
+    if stand_columns and "capacity" not in stand_columns:
+        conn.execute(
+            "ALTER TABLE stands ADD COLUMN capacity INTEGER NOT NULL DEFAULT 1"
+        )
 
     if hunt_columns and "host_hunt_id" not in hunt_columns:
         conn.execute(
@@ -84,6 +92,8 @@ def ensure_current_schema(conn):
         conn.execute(
             "CREATE INDEX IF NOT EXISTS idx_hunts_host_hunt_id ON hunts(host_hunt_id)"
         )
+
+    if stand_columns or hunt_columns:
         conn.commit()
 
 

@@ -1,4 +1,4 @@
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field
 
 
 # Guest brought along on a hunt
@@ -16,16 +16,3 @@ class CheckInRequest(BaseModel):
 
     stand_id: str = Field(min_length=1)
     guests: list[Guest] = Field(default_factory=list, max_length=2)
-
-    @model_validator(mode="after")
-    def validate_guests(self):
-        for guest in self.guests:
-            if guest.stand_id == self.stand_id:
-                raise ValueError("Guest cannot be assigned the host's stand.")
-
-        stand_ids = [guest.stand_id for guest in self.guests]
-
-        if len(stand_ids) != len(set(stand_ids)):
-            raise ValueError("Two guests cannot share the same stand.")
-
-        return self

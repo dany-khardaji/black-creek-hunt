@@ -525,7 +525,17 @@ def test_blank_guest_fields_rejected(field):
     assert response.status_code == 422
 
 
-def test_guest_cannot_use_host_stand():
+def test_guest_can_share_host_stand_when_capacity_allows(monkeypatch):
+    conn = sqlite3.connect(":memory:", check_same_thread=False)
+    conn.row_factory = sqlite3.Row
+    conn.executescript(SCHEMA)
+    conn.execute(
+        "INSERT INTO stands (id, name, type, lat, lng, capacity) VALUES (?, ?, ?, ?, ?, ?)",
+        ("stand-1", "Double Stand", "box", 35.0, -78.0, 2),
+    )
+    conn.commit()
+    monkeypatch.setattr(main_module, "get_connection", lambda: conn)
+
     response = TestClient(app).post(
         "/api/hunts",
         json={
@@ -536,10 +546,23 @@ def test_guest_cannot_use_host_stand():
         },
     )
 
-    assert response.status_code == 422
+    assert response.status_code == 200
 
 
-def test_two_guests_cannot_share_a_stand():
+def test_two_guests_can_share_a_two_seat_stand(monkeypatch):
+    conn = sqlite3.connect(":memory:", check_same_thread=False)
+    conn.row_factory = sqlite3.Row
+    conn.executescript(SCHEMA)
+    conn.executemany(
+        "INSERT INTO stands (id, name, type, lat, lng, capacity) VALUES (?, ?, ?, ?, ?, ?)",
+        [
+            ("stand-1", "Host Stand", "ladder", 35.0, -78.0, 1),
+            ("stand-2", "Double Stand", "box", 35.1, -78.1, 2),
+        ],
+    )
+    conn.commit()
+    monkeypatch.setattr(main_module, "get_connection", lambda: conn)
+
     response = TestClient(app).post(
         "/api/hunts",
         json={
@@ -551,7 +574,100 @@ def test_two_guests_cannot_share_a_stand():
         },
     )
 
-    assert response.status_code == 422
+    assert response.status_code == 200
+
+
+def test_checkin_over_capacity_rejects_every_row(monkeypatch, tmp_path):
+    db_path = tmp_path / "capacity_rollback.db"
+    conn = sqlite3.connect(db_path, check_same_thread=False)
+    conn.row_factory = sqlite3.Row
+    conn.executescript(SCHEMA)
+    conn.execute(
+        "INSERT INTO stands (id, name, type, lat, lng, capacity) VALUES (?, ?, ?, ?, ?, ?)",
+        ("stand-1", "Double Stand", "box", 35.0, -78.0, 2),
+    )
+    conn.commit()
+    conn.close()
+
+    def fake_get_connection():
+        connection = sqlite3.connect(db_path, check_same_thread=False)
+        connection.row_factory = sqlite3.Row
+        return connection
+
+    monkeypatch.setattr(main_module, "get_connection", fake_get_connection)
+    response = TestClient(app).post(
+        "/api/hunts",
+        json={
+            "stand_id": "stand-1",
+            "guests": [
+                {"name": "Guest A", "phone": "555-0100", "stand_id": "stand-1"},
+                {"name": "Guest B", "phone": "555-0101", "stand_id": "stand-1"},
+            ],
+        },
+    )
+
+    assert response.status_code == 409
+    assert response.json()["detail"] == {
+        "code": "stand_capacity_exceeded",
+        "message": "Double Stand has 2 seats available, but 3 were requested",
+        "stand_id": "stand-1",
+        "stand_name": "Double Stand",
+        "capacity": 2,
+        "occupied_count": 0,
+        "requested_seats": 3,
+        "available_seats": 2,
+    }
+
+    check_conn = sqlite3.connect(db_path)
+    row_count = check_conn.execute("SELECT COUNT(*) FROM hunts").fetchone()[0]
+    check_conn.close()
+    assert row_count == 0
+
+
+def test_concurrent_checkins_only_one_claims_final_seat(monkeypatch, tmp_path):
+    db_path = tmp_path / "capacity_concurrent.db"
+    conn = sqlite3.connect(db_path, check_same_thread=False)
+    conn.row_factory = sqlite3.Row
+    conn.executescript(SCHEMA)
+    conn.execute(
+        "INSERT INTO stands (id, name, type, lat, lng, capacity) VALUES (?, ?, ?, ?, ?, ?)",
+        ("stand-1", "Double Stand", "box", 35.0, -78.0, 2),
+    )
+    conn.execute(
+        "INSERT INTO hunts (stand_id, member_id, checked_in_at) VALUES (?, ?, ?)",
+        ("stand-1", "member-2", datetime.now(timezone.utc).isoformat()),
+    )
+    conn.commit()
+    conn.close()
+
+    def fake_get_connection():
+        connection = sqlite3.connect(db_path, check_same_thread=False)
+        connection.row_factory = sqlite3.Row
+        return connection
+
+    monkeypatch.setattr(main_module, "get_connection", fake_get_connection)
+    results = []
+
+    def make_request():
+        response = TestClient(app).post(
+            "/api/hunts", json={"stand_id": "stand-1", "guests": []}
+        )
+        results.append(response.status_code)
+
+    threads = [threading.Thread(target=make_request) for _ in range(2)]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join()
+
+    assert results.count(200) == 1
+    assert results.count(409) == 1
+    check_conn = sqlite3.connect(db_path)
+    active_count = check_conn.execute(
+        "SELECT COUNT(*) FROM hunts WHERE checked_out_at IS NULL"
+    ).fetchone()[0]
+    check_conn.close()
+    assert active_count == 2
 
 
 def test_nonexistent_guest_stand_rejected(monkeypatch):
@@ -799,3 +915,67 @@ def test_map_state_returns_safe_host_and_guest_details(monkeypatch):
     assert guest["can_check_out"] is False
     assert "guest_phone" not in guest
     assert data["live_count"] == 2
+
+
+def test_map_state_returns_capacity_and_both_occupants(monkeypatch):
+    now = datetime(2026, 11, 10, 17, 0, tzinfo=timezone.utc)
+    conn = sqlite3.connect(":memory:", check_same_thread=False)
+    conn.row_factory = sqlite3.Row
+    conn.executescript(SCHEMA)
+    conn.execute(
+        """
+        INSERT INTO members (
+            id, email, password_hash, first_name, last_name, created_at
+        ) VALUES (?, ?, ?, ?, ?, ?)
+        """,
+        (
+            "member-1",
+            "mike@example.com",
+            "not-a-real-hash",
+            "Mike",
+            "Doe",
+            now.isoformat(),
+        ),
+    )
+    conn.execute(
+        "INSERT INTO stands (id, name, type, lat, lng, capacity) VALUES (?, ?, ?, ?, ?, ?)",
+        ("stand-1", "Double Stand", "box", 35.0, -78.0, 2),
+    )
+    host_cursor = conn.execute(
+        "INSERT INTO hunts (stand_id, member_id, checked_in_at) VALUES (?, ?, ?)",
+        ("stand-1", "member-1", (now - timedelta(hours=1)).isoformat()),
+    )
+    conn.execute(
+        """
+        INSERT INTO hunts (
+            stand_id, member_id, host_hunt_id, checked_in_at,
+            guest_name, guest_phone
+        ) VALUES (?, ?, ?, ?, ?, ?)
+        """,
+        (
+            "stand-1",
+            "member-1",
+            host_cursor.lastrowid,
+            (now - timedelta(hours=1)).isoformat(),
+            "Jane Smith",
+            "555-0100",
+        ),
+    )
+    conn.commit()
+    monkeypatch.setattr(main_module, "get_connection", lambda: conn)
+    monkeypatch.setattr(main_module, "utc_now", lambda: now)
+
+    response = TestClient(app).get("/api/map-state")
+    stand = response.json()["stands"][0]
+
+    assert response.status_code == 200
+    assert stand["capacity"] == 2
+    assert stand["occupied_count"] == 2
+    assert stand["available_seats"] == 0
+    assert [occupant["display_name"] for occupant in stand["occupants"]] == [
+        "Mike D.",
+        "Jane Smith",
+    ]
+    assert stand["occupants"][1]["occupant_type"] == "guest"
+    assert stand["occupants"][1]["guest_of"] == "Mike D."
+    assert "guest_phone" not in stand["occupants"][1]

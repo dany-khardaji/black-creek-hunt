@@ -19,6 +19,7 @@
   --overdue: #e5484d;
   --focus: #ff6b1a;
   --success: #75b987;
+  --live: #55d98b;
 }
 
 * {
@@ -99,15 +100,57 @@ button:disabled {
   letter-spacing: 0.02em;
 }
 
-#live-count {
+.live-counter {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.42rem;
   margin: 0;
   border: 1px solid var(--border);
   border-radius: 999px;
-  padding: 0.45rem 0.75rem;
-  background: var(--surface);
-  color: var(--text);
-  font-size: 0.9rem;
+  padding: 0.48rem 0.72rem;
+  background: rgba(18, 20, 18, 0.84);
+  box-shadow: 0 5px 18px rgba(0, 0, 0, 0.26);
+  color: var(--muted);
+  font-size: 0.82rem;
   font-variant-numeric: tabular-nums;
+  line-height: 1;
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
+}
+
+.live-counter strong {
+  color: var(--text);
+  font-size: 1rem;
+  font-weight: 800;
+}
+
+.live-indicator {
+  width: 0.58rem;
+  height: 0.58rem;
+  border: 1px solid var(--open);
+  border-radius: 50%;
+  background: transparent;
+}
+
+.live-counter[data-active="true"] {
+  border-color: rgba(85, 217, 139, 0.28);
+}
+
+.live-counter[data-active="true"] .live-indicator {
+  border-color: var(--live);
+  background: var(--live);
+  box-shadow:
+    0 0 0 3px rgba(85, 217, 139, 0.14),
+    0 0 12px rgba(85, 217, 139, 0.8);
+  animation: live-glow 2.4s ease-in-out infinite;
+}
+
+@keyframes live-glow {
+  50% {
+    box-shadow:
+      0 0 0 4px rgba(85, 217, 139, 0.1),
+      0 0 18px rgba(85, 217, 139, 0.95);
+  }
 }
 
 #app-message {
@@ -203,6 +246,40 @@ button:disabled {
   margin: 0.55rem 0 0;
   color: var(--muted);
   line-height: 1.45;
+}
+
+#panel-status .capacity-summary {
+  color: var(--text);
+}
+
+.capacity-summary strong {
+  color: var(--active);
+  font-size: 1.05rem;
+}
+
+.occupant-list {
+  display: grid;
+  gap: 0.65rem;
+  margin: 0.85rem 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.occupant-list li {
+  display: grid;
+  gap: 0.2rem;
+  border-left: 2px solid var(--active);
+  padding-left: 0.65rem;
+}
+
+.occupant-list strong {
+  color: var(--text);
+  font-size: 0.92rem;
+}
+
+.occupant-list span {
+  color: var(--muted);
+  font-size: 0.78rem;
 }
 
 .status-label {
@@ -330,49 +407,132 @@ select {
 }
 
 .stand-marker-anchor {
+  overflow: visible !important;
   border: 0;
   background: transparent;
 }
 
 .stand-marker {
   position: relative;
-  display: grid;
-  width: 42px;
-  height: 42px;
-  place-items: center;
-  border: 3px solid #121412;
-  border-radius: 50%;
-  background: var(--marker-color);
-  box-shadow:
-    0 0 0 2px rgba(244, 241, 232, 0.85),
-    0 4px 12px rgba(0, 0, 0, 0.55);
-  color: #121412;
-  font-size: 0.78rem;
-  font-weight: 900;
-  letter-spacing: 0.02em;
+  display: block;
+  width: 34px;
+  height: 34px;
+  color: var(--marker-color);
+  transition: transform 160ms ease-out;
 }
 
-.stand-marker.open {
-  color: var(--text);
+.stand-gauge {
+  display: block;
+  width: 34px;
+  height: 34px;
+  overflow: visible;
+  filter: drop-shadow(0 2px 4px rgba(0, 0, 0, 0.6));
 }
 
-.stand-marker.guest {
-  border-style: dashed;
+/* Marks the stand whose panel is open, so the sheet always has a visible anchor. */
+.selection-ring {
+  fill: none;
+  stroke: var(--text);
+  stroke-width: 1.4;
+  opacity: 0;
+  transition: opacity 160ms ease-out;
 }
 
-.guest-badge {
-  position: absolute;
-  right: -6px;
-  bottom: -5px;
-  display: grid;
-  width: 18px;
-  height: 18px;
-  place-items: center;
-  border: 2px solid #121412;
-  border-radius: 50%;
-  background: var(--text);
-  color: #121412;
-  font-size: 0.6rem;
+.stand-marker.selected .selection-ring {
+  opacity: 0.9;
+}
+
+.stand-marker.selected {
+  transform: scale(1.15);
+}
+
+.stand-marker.selected .stand-gauge {
+  filter:
+    drop-shadow(0 0 6px rgba(0, 0, 0, 0.8))
+    drop-shadow(0 2px 4px rgba(0, 0, 0, 0.6));
+}
+
+/* Dim remainder of the seat ring: the seats still open. */
+.gauge-track {
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 2.4;
+  opacity: 0.24;
+}
+
+/* Lit share of the ring: one arc segment per occupied seat fraction. */
+.gauge-fill {
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 2.4;
+  stroke-linecap: round;
+}
+
+.stand-marker.occupied .gauge-fill {
+  animation: stand-gauge-breathe 3.4s ease-in-out infinite;
+}
+
+.stand-marker.has-guest .gauge-fill {
+  stroke-dashoffset: 1.6;
+}
+
+.stand-body {
+  fill: rgba(18, 20, 18, 0.94);
+  stroke: currentColor;
+  stroke-width: 1.2;
+}
+
+.stand-marker.active.full .stand-body {
+  fill: rgba(255, 107, 26, 0.2);
+}
+
+.stand-marker.overdue.full .stand-body {
+  fill: rgba(229, 72, 77, 0.2);
+}
+
+.stand-glyph {
+  fill: none;
+  stroke: currentColor;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  stroke-width: 1.3;
+}
+
+.stand-roof {
+  fill: currentColor;
+  stroke: none;
+}
+
+.stand-marker-anchor:hover .stand-marker {
+  transform: scale(1.08);
+}
+
+.stand-marker-anchor:hover .stand-marker.selected {
+  transform: scale(1.22);
+}
+
+.stand-marker-anchor:focus {
+  outline: none;
+}
+
+.stand-marker-anchor:focus-visible .stand-body {
+  stroke-width: 2.4;
+}
+
+/* Slow breath: opacity and bloom only, so 20 markers never touch layout. */
+@keyframes stand-gauge-breathe {
+  0%,
+  100% {
+    opacity: 0.55;
+    filter: drop-shadow(0 0 1px var(--marker-color));
+  }
+
+  50% {
+    opacity: 1;
+    filter:
+      drop-shadow(0 0 4px var(--marker-color))
+      drop-shadow(0 0 9px var(--marker-color));
+  }
 }
 
 .leaflet-tooltip {
@@ -438,7 +598,7 @@ select {
   #panel {
     inset: auto 0 0;
     width: 100%;
-    max-height: min(76vh, 42rem);
+    max-height: min(62vh, 34rem);
     border-top: 1px solid var(--border);
     border-left: 0;
     border-radius: 18px 18px 0 0;
@@ -461,6 +621,24 @@ select {
 
 @media (prefers-reduced-motion: reduce) {
   #panel {
+    transition: none;
+  }
+
+  .live-counter[data-active="true"] .live-indicator {
+    animation: none;
+  }
+
+  .stand-marker.occupied .gauge-fill {
+    opacity: 1;
+    filter: drop-shadow(0 0 3px var(--marker-color));
+    animation: none;
+  }
+
+  .selection-ring {
+    transition: none;
+  }
+
+  .stand-marker {
     transition: none;
   }
 }

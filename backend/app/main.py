@@ -1,8 +1,9 @@
+from collections import Counter
 from datetime import datetime, timezone
 
 from app.database import get_connection
 from app.models import CheckInRequest
-from app.sessions import is_hunt_overdue, is_stand_occupied, session_boundary
+from app.sessions import active_hunt_count, is_hunt_overdue, session_boundary
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 
@@ -42,6 +43,7 @@ def missing_stand_detail(stand_id):
     }
 
 
+# Will probably be edited later
 def display_name(active_hunt):
     if active_hunt["guest_name"]:
         return active_hunt["guest_name"]
@@ -89,9 +91,10 @@ def list_map_features():
 def check_in(request: CheckInRequest):
     conn = get_connection()
     now = utc_now()
-    requested_ids = sorted(
+    requested_seats = Counter(
         [request.stand_id, *(guest.stand_id for guest in request.guests)]
     )
+    requested_ids = sorted(requested_seats)
 
     try:
         # SQLite grants one writer the lock before any occupancy checks run.
@@ -118,12 +121,38 @@ def check_in(request: CheckInRequest):
                         "stand_retired", f"{stand['name']} is retired", stand
                     ),
                 )
-            if is_stand_occupied(conn, stand_id, now):
+            occupied_count = active_hunt_count(conn, stand_id, now)
+            available_seats = max(stand["capacity"] - occupied_count, 0)
+            seats_needed = requested_seats[stand_id]
+
+            if seats_needed > available_seats:
+                if available_seats == 0 and seats_needed == 1:
+                    raise HTTPException(
+                        status_code=409,
+                        detail=error_detail(
+                            "stand_occupied", f"{stand['name']} is occupied", stand
+                        ),
+                    )
+
+                seat_word = "seat" if available_seats == 1 else "seats"
+                verb = "was" if seats_needed == 1 else "were"
+                detail = error_detail(
+                    "stand_capacity_exceeded",
+                    f"{stand['name']} has {available_seats} {seat_word} available, "
+                    f"but {seats_needed} {verb} requested",
+                    stand,
+                )
+                detail.update(
+                    {
+                        "capacity": stand["capacity"],
+                        "occupied_count": occupied_count,
+                        "requested_seats": seats_needed,
+                        "available_seats": available_seats,
+                    }
+                )
                 raise HTTPException(
                     status_code=409,
-                    detail=error_detail(
-                        "stand_occupied", f"{stand['name']} is occupied", stand
-                    ),
+                    detail=detail,
                 )
 
         host_cursor = conn.execute(
@@ -246,7 +275,7 @@ def get_map_state():
         stand_states = []
 
         for stand in stands:
-            active_hunt = conn.execute(
+            active_hunts = conn.execute(
                 """
                 SELECT hunts.*, members.first_name, members.last_name
                 FROM hunts
@@ -254,13 +283,15 @@ def get_map_state():
                 WHERE hunts.stand_id = ?
                 AND hunts.checked_out_at IS NULL
                 AND hunts.checked_in_at > ?
-                ORDER BY hunts.checked_in_at DESC
-                LIMIT 1
+                ORDER BY
+                    CASE WHEN hunts.guest_name IS NULL THEN 0 ELSE 1 END,
+                    hunts.checked_in_at,
+                    hunts.id
                 """,
                 (stand["id"], boundary),
-            ).fetchone()
+            ).fetchall()
 
-            if active_hunt is None:
+            if not active_hunts:
                 stand_states.append(
                     {
                         "id": stand["id"],
@@ -268,6 +299,10 @@ def get_map_state():
                         "type": stand["type"],
                         "lat": stand["lat"],
                         "lng": stand["lng"],
+                        "capacity": stand["capacity"],
+                        "occupied_count": 0,
+                        "available_seats": stand["capacity"],
+                        "occupants": [],
                         "status": "open",
                         "occupied_by": None,
                         "occupant_initials": None,
@@ -280,13 +315,32 @@ def get_map_state():
                 )
                 continue
 
-            occupant_name = display_name(active_hunt)
-            member_data = {**dict(active_hunt), "guest_name": None}
-            member_name = display_name(member_data)
-            is_guest = active_hunt["guest_name"] is not None
-            can_check_out = (
-                not is_guest and active_hunt["member_id"] == CURRENT_MEMBER_ID
+            occupants = []
+            for active_hunt in active_hunts:
+                occupant_name = display_name(active_hunt)
+                member_data = {**dict(active_hunt), "guest_name": None}
+                member_name = display_name(member_data)
+                is_guest = active_hunt["guest_name"] is not None
+                can_check_out = (
+                    not is_guest and active_hunt["member_id"] == CURRENT_MEMBER_ID
+                )
+                occupants.append(
+                    {
+                        "display_name": occupant_name,
+                        "initials": initials(occupant_name),
+                        "occupant_type": "guest" if is_guest else "member",
+                        "guest_of": member_name if is_guest else None,
+                        "checked_in_at": active_hunt["checked_in_at"],
+                        "can_check_out": can_check_out,
+                        "hunt_id": active_hunt["id"] if can_check_out else None,
+                    }
+                )
+
+            primary_occupant = occupants[0]
+            checkout_occupant = next(
+                (occupant for occupant in occupants if occupant["can_check_out"]), None
             )
+            occupied_count = len(occupants)
 
             stand_states.append(
                 {
@@ -295,16 +349,27 @@ def get_map_state():
                     "type": stand["type"],
                     "lat": stand["lat"],
                     "lng": stand["lng"],
+                    "capacity": stand["capacity"],
+                    "occupied_count": occupied_count,
+                    "available_seats": max(stand["capacity"] - occupied_count, 0),
+                    "occupants": occupants,
                     "status": "overdue"
-                    if is_hunt_overdue(active_hunt["checked_in_at"], now)
+                    if any(
+                        is_hunt_overdue(active_hunt["checked_in_at"], now)
+                        for active_hunt in active_hunts
+                    )
                     else "active",
-                    "occupied_by": occupant_name,
-                    "occupant_initials": initials(occupant_name),
-                    "occupant_type": "guest" if is_guest else "member",
-                    "guest_of": member_name if is_guest else None,
-                    "checked_in_at": active_hunt["checked_in_at"],
-                    "can_check_out": can_check_out,
-                    "hunt_id": active_hunt["id"] if can_check_out else None,
+                    "occupied_by": ", ".join(
+                        occupant["display_name"] for occupant in occupants
+                    ),
+                    "occupant_initials": primary_occupant["initials"],
+                    "occupant_type": primary_occupant["occupant_type"],
+                    "guest_of": primary_occupant["guest_of"],
+                    "checked_in_at": primary_occupant["checked_in_at"],
+                    "can_check_out": checkout_occupant is not None,
+                    "hunt_id": checkout_occupant["hunt_id"]
+                    if checkout_occupant
+                    else None,
                 }
             )
 

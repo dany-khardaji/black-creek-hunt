@@ -21,8 +21,15 @@ conn = get_connection()
 for stand in stands:
     conn.execute(
         """
-        INSERT OR REPLACE INTO stands (id, name, type, lat, lng, capacity, preferred_winds)
+        INSERT INTO stands (id, name, type, lat, lng, capacity, preferred_winds)
         VALUES (?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(id) DO UPDATE SET
+            name = excluded.name,
+            type = excluded.type,
+            lat = excluded.lat,
+            lng = excluded.lng,
+            capacity = excluded.capacity,
+            preferred_winds = excluded.preferred_winds
         """,
         (
             stand["id"],
@@ -39,8 +46,13 @@ for stand in stands:
 for feature in features:
     conn.execute(
         """
-        INSERT OR REPLACE INTO map_features (id, name, type, lat, lng)
+        INSERT INTO map_features (id, name, type, lat, lng)
         VALUES (?, ?, ?, ?, ?)
+        ON CONFLICT(id) DO UPDATE SET
+            name = excluded.name,
+            type = excluded.type,
+            lat = excluded.lat,
+            lng = excluded.lng
         """,
         (
             feature["id"],

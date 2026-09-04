@@ -26,14 +26,13 @@ def session_boundary(now_utc):
     return todays_3am
 
 
-# Checks whether a stand currently has an active (not checked out, not stale) session
-def is_stand_occupied(conn, stand_id, now_utc):
+# Counts active seats while ignoring checked-out and stale historical hunts.
+def active_hunt_count(conn, stand_id, now_utc):
     boundary = session_boundary(now_utc)
 
-    # look for any hunt on this stand that hasn't been checked out or started after the reset boundary
     row = conn.execute(
         """
-        SELECT * FROM hunts
+        SELECT COUNT(*) FROM hunts
         WHERE stand_id = ?
         AND checked_out_at IS NULL
         AND checked_in_at > ?
@@ -41,8 +40,12 @@ def is_stand_occupied(conn, stand_id, now_utc):
         (stand_id, boundary.isoformat()),
     ).fetchone()
 
-    # true if a matching row was found, false if not
-    return row is not None
+    return row[0]
+
+
+# Convenience for callers that only need a yes/no occupancy answer.
+def is_stand_occupied(conn, stand_id, now_utc):
+    return active_hunt_count(conn, stand_id, now_utc) > 0
 
 
 def is_hunt_overdue(checked_in_at, now_utc):

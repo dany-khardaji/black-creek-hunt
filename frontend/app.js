@@ -8,16 +8,18 @@ const API_URL =
       ? `${location.protocol}//${location.hostname}:8000`
       : "";
 
-const map = L.map("map", { zoomControl: true }).setView(
-  [35.645, -78.442],
-  15,
-);
+const map = L.map("map", { zoomControl: true }).setView([35.645, -78.442], 15);
 map.zoomControl.setPosition("bottomleft");
 L.tileLayer(
   "https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}",
   { attribution: "Imagery &copy; Esri", maxZoom: 19 },
 ).addTo(map);
 map.attributionControl.setPrefix(false);
+
+// Tooltips are hover-driven, so on touch they never fire and the panel carries
+// the same information in a readable form. Skip binding them entirely there.
+const hasHover = window.matchMedia("(hover: hover)").matches;
+const isBottomSheet = () => window.matchMedia("(max-width: 640px)").matches;
 
 const standMarkers = new Map();
 const featureMarkers = new Map();
@@ -37,6 +39,9 @@ const guestFields = document.getElementById("guest-fields");
 const addGuestButton = document.getElementById("add-guest");
 const checkOutButton = document.getElementById("check-out-button");
 const appMessage = document.getElementById("app-message");
+const liveCounter = document.getElementById("live-counter");
+const liveCountValue = document.getElementById("live-count-value");
+const liveCountLabel = document.getElementById("live-count-label");
 
 class ApiError extends Error {
   constructor(status, payload) {
@@ -112,7 +117,10 @@ function formatApiError(error) {
   const detail = error.payload?.detail;
   if (detail?.message) return detail.message;
   if (Array.isArray(detail)) {
-    return detail.map((item) => item.msg).filter(Boolean).join(" ");
+    return detail
+      .map((item) => item.msg)
+      .filter(Boolean)
+      .join(" ");
   }
   if (typeof detail === "string") return detail;
   return `The request failed (${error.status}). Please try again.`;
@@ -137,13 +145,11 @@ function captureDraft({ clearMessage = false } = {}) {
   if (!selectedStandId || checkInForm.hidden) return;
 
   const draft = getDraft(selectedStandId);
-  draft.guests = [...guestFields.querySelectorAll(".guest-row")].map(
-    (row) => ({
-      name: row.querySelector('[data-field="name"]').value,
-      phone: row.querySelector('[data-field="phone"]').value,
-      stand_id: row.querySelector('[data-field="stand_id"]').value,
-    }),
-  );
+  draft.guests = [...guestFields.querySelectorAll(".guest-row")].map((row) => ({
+    name: row.querySelector('[data-field="name"]').value,
+    phone: row.querySelector('[data-field="phone"]').value,
+    stand_id: row.querySelector('[data-field="stand_id"]').value,
+  }));
 
   if (clearMessage) {
     draft.message = "";
@@ -152,28 +158,53 @@ function captureDraft({ clearMessage = false } = {}) {
   }
 }
 
+function availableSeatsForStand(stand) {
+  const capacity = stand.capacity ?? 1;
+  const occupiedCount =
+    stand.occupied_count ?? (stand.status === "open" ? 0 : capacity);
+  return stand.available_seats ?? Math.max(capacity - occupiedCount, 0);
+}
+
+function seatsReservedByDraft(draft, standId, excludedGuestIndex) {
+  return (
+    (standId === selectedStandId ? 1 : 0) +
+    draft.guests.filter(
+      (guest, index) =>
+        index !== excludedGuestIndex && guest.stand_id === standId,
+    ).length
+  );
+}
+
 function guestStandOptions(draft, guestIndex) {
   const guest = draft.guests[guestIndex];
-  const selectedByOtherGuests = new Set(
-    draft.guests
-      .filter((_, index) => index !== guestIndex)
-      .map((otherGuest) => otherGuest.stand_id)
-      .filter(Boolean),
-  );
 
   return mapState.stands
-    .filter(
-      (stand) =>
-        stand.id !== selectedStandId &&
-        !selectedByOtherGuests.has(stand.id) &&
-        (stand.status === "open" || stand.id === guest.stand_id),
-    )
+    .filter((stand) => {
+      const reservedSeats = seatsReservedByDraft(
+        draft,
+        stand.id,
+        guestIndex,
+      );
+      const seatsRemaining =
+        availableSeatsForStand(stand) - reservedSeats;
+
+      return seatsRemaining > 0 || stand.id === guest.stand_id;
+    })
     .map((stand) => {
+      const reservedSeats = seatsReservedByDraft(
+        draft,
+        stand.id,
+        guestIndex,
+      );
+      const seatsRemaining = Math.max(
+        availableSeatsForStand(stand) - reservedSeats,
+        0,
+      );
       const selected = stand.id === guest.stand_id ? " selected" : "";
-      const label =
-        stand.status === "open"
-          ? stand.name
-          : `${stand.name} (now unavailable)`;
+      const seatWord = seatsRemaining === 1 ? "seat" : "seats";
+      const label = seatsRemaining
+        ? `${stand.name} (${seatsRemaining} ${seatWord} available)`
+        : `${stand.name} (now unavailable)`;
       return `<option value="${escapeHtml(stand.id)}"${selected}>${escapeHtml(label)}</option>`;
     })
     .join("");
@@ -231,22 +262,33 @@ function renderPanel() {
 
   panelName.textContent = stand.name;
   const statusText = stand.status[0].toUpperCase() + stand.status.slice(1);
-  const occupantDescription = stand.occupied_by
-    ? `${stand.occupied_by}${stand.occupant_type === "guest" && stand.guest_of ? `, guest of ${stand.guest_of}` : ""}`
-    : "Available for check-in";
-  const checkedInDescription = stand.checked_in_at
-    ? `Checked in at ${formatCheckedInTime(stand.checked_in_at)}`
-    : "";
+  const capacity = stand.capacity ?? 1;
+  const occupiedCount = stand.occupied_count ?? (stand.occupied_by ? 1 : 0);
+  const availableSeats = availableSeatsForStand(stand);
+  const occupants = stand.occupants ?? [];
+  const seatWord = capacity === 1 ? "seat" : "seats";
+  const occupantList = occupants.length
+    ? `<ul class="occupant-list">${occupants
+        .map((occupant) => {
+          const role =
+            occupant.occupant_type === "guest" ? "Guest" : "Member";
+          const guestOf = occupant.guest_of
+            ? ` · with ${escapeHtml(occupant.guest_of)}`
+            : "";
+          return `<li><strong>${escapeHtml(occupant.display_name)}</strong><span>${role}${guestOf} · ${escapeHtml(formatCheckedInTime(occupant.checked_in_at))}</span></li>`;
+        })
+        .join("")}</ul>`
+    : "<p>Available for check-in</p>";
 
   panelStatus.innerHTML = `
     <span class="status-label" style="--status-color: ${statusColor(stand.status)}">
       ${escapeHtml(statusText)}
     </span>
-    <p>${escapeHtml(occupantDescription)}</p>
-    ${checkedInDescription ? `<p>${escapeHtml(checkedInDescription)}</p>` : ""}
+    <p class="capacity-summary"><strong>${occupiedCount}/${capacity}</strong> ${seatWord} occupied · ${availableSeats} available</p>
+    ${occupantList}
   `;
 
-  const canCheckIn = stand.status === "open";
+  const canCheckIn = availableSeats > 0 && !stand.can_check_out;
   checkInForm.hidden = !canCheckIn;
   checkOutButton.hidden = !stand.can_check_out;
 
@@ -262,10 +304,31 @@ function renderPanel() {
   panel.setAttribute("aria-hidden", "false");
 }
 
+// Slide the selected stand into the strip of map the panel leaves uncovered:
+// above the bottom sheet on phones, left of the side panel on desktop.
+function revealSelectedStand(standId) {
+  const marker = standMarkers.get(standId);
+  if (!marker) return;
+
+  const point = map.latLngToContainerPoint(marker.getLatLng());
+  const size = map.getSize();
+  const panelBox = panel.getBoundingClientRect();
+  const target = isBottomSheet()
+    ? L.point(size.x / 2, Math.max(size.y - panelBox.height, 0) / 2)
+    : L.point(Math.max(size.x - panelBox.width, 0) / 2, size.y / 2);
+
+  const offset = point.subtract(target);
+  if (Math.abs(offset.x) < 24 && Math.abs(offset.y) < 24) return;
+
+  map.panBy(offset, { animate: true, duration: 0.35 });
+}
+
 function openPanel(standId, { updateUrl = true, focusHeading = true } = {}) {
   captureDraft();
   selectedStandId = standId;
   renderPanel();
+  syncStandMarkers();
+  revealSelectedStand(standId);
 
   if (updateUrl) {
     const url = new URL(location.href);
@@ -283,6 +346,7 @@ function closePanel({ updateUrl = true } = {}) {
   selectedStandId = null;
   panel.classList.remove("open");
   panel.setAttribute("aria-hidden", "true");
+  syncStandMarkers();
 
   if (updateUrl) {
     const url = new URL(location.href);
@@ -291,20 +355,51 @@ function closePanel({ updateUrl = true } = {}) {
   }
 }
 
+const GAUGE_RADIUS = 12.5;
+const GAUGE_CIRCUMFERENCE = 2 * Math.PI * GAUGE_RADIUS;
+
 function standMarkerIcon(stand) {
-  const markerText =
-    stand.status === "open" ? "" : stand.occupant_initials || "?";
-  const guestClass = stand.occupant_type === "guest" ? " guest" : "";
-  const guestBadge =
-    stand.occupant_type === "guest"
-      ? '<span class="guest-badge" aria-hidden="true">G</span>'
-      : "";
+  const capacity = Math.max(Number(stand.capacity) || 1, 1);
+  const occupiedCount = Math.min(Number(stand.occupied_count) || 0, capacity);
+  const occupants = stand.occupants ?? [];
+  const hasGuest = occupants.some(
+    (occupant) => occupant?.occupant_type === "guest",
+  );
+  const isFull = occupiedCount >= capacity;
+  const filledLength = (occupiedCount / capacity) * GAUGE_CIRCUMFERENCE;
+  const occupancyClass = occupiedCount > 0 ? " occupied" : "";
+  const fullClass = isFull ? " full" : "";
+  const guestClass = hasGuest ? " has-guest" : "";
+  // Re-applied on every refresh because setIcon rebuilds the element.
+  const selectedClass = stand.id === selectedStandId ? " selected" : "";
+  // A full ring needs no dash pattern; a partial one lights the occupied share
+  // and leaves the remainder to the dim track underneath.
+  const gaugeDash = isFull
+    ? ""
+    : `stroke-dasharray="${filledLength.toFixed(2)} ${(GAUGE_CIRCUMFERENCE - filledLength).toFixed(2)}"`;
 
   return L.divIcon({
     className: "stand-marker-anchor",
-    html: `<span class="stand-marker ${stand.status}${guestClass}" style="--marker-color: ${statusColor(stand.status)}">${escapeHtml(markerText)}${guestBadge}</span>`,
-    iconSize: [44, 44],
-    iconAnchor: [22, 22],
+    html: `
+      <span class="stand-marker ${stand.status}${occupancyClass}${fullClass}${guestClass}${selectedClass}" style="--marker-color: ${statusColor(stand.status)}">
+        <svg class="stand-gauge" viewBox="0 0 34 34" aria-hidden="true" focusable="false">
+          <circle class="selection-ring" cx="17" cy="17" r="16" />
+          <circle class="gauge-track" cx="17" cy="17" r="${GAUGE_RADIUS}" />
+          ${
+            occupiedCount > 0
+              ? `<circle class="gauge-fill" cx="17" cy="17" r="${GAUGE_RADIUS}" ${gaugeDash} transform="rotate(-90 17 17)" />`
+              : ""
+          }
+          <circle class="stand-body" cx="17" cy="17" r="9.4" />
+          <g class="stand-glyph">
+            <path class="stand-roof" d="M12.4 16.6 17 12.6l4.6 4z" />
+            <rect x="13.7" y="17" width="6.6" height="4.6" rx="0.6" />
+          </g>
+        </svg>
+      </span>
+    `,
+    iconSize: [34, 34],
+    iconAnchor: [17, 17],
   });
 }
 
@@ -321,15 +416,19 @@ function syncStandMarkers() {
         title: stand.name,
       }).addTo(map);
       marker.on("click", () => openPanel(stand.id));
-      marker.bindTooltip("", { direction: "top", offset: [0, -20] });
+      if (hasHover) {
+        marker.bindTooltip("", { direction: "top", offset: [0, -18] });
+      }
       standMarkers.set(stand.id, marker);
     }
 
     marker.setLatLng([stand.lat, stand.lng]);
     marker.setIcon(standMarkerIcon(stand));
-    marker.setTooltipContent(
-      `${escapeHtml(stand.name)}: ${escapeHtml(stand.status)}${stand.occupied_by ? ` — ${escapeHtml(stand.occupied_by)}` : ""}`,
-    );
+    if (hasHover) {
+      marker.setTooltipContent(
+        `${escapeHtml(stand.name)}: ${escapeHtml(stand.status)} — ${stand.occupied_count ?? 0}/${stand.capacity ?? 1} seats${stand.occupied_by ? ` — ${escapeHtml(stand.occupied_by)}` : ""}`,
+      );
+    }
   }
 
   for (const [standId, marker] of standMarkers) {
@@ -385,13 +484,22 @@ async function refreshMapState({
     const data = await requestJson("/api/map-state");
     mapState = data;
 
-    const noun = data.live_count === 1 ? "hunter" : "hunters";
-    document.getElementById("live-count").textContent =
-      `${data.live_count} ${noun} on the property`;
+    const noun = data.live_count === 1 ? "Hunter" : "Hunters";
+    liveCountValue.textContent = data.live_count;
+    liveCountLabel.textContent = noun;
+    liveCounter.dataset.active = String(data.live_count > 0);
+    liveCounter.setAttribute(
+      "aria-label",
+      `${data.live_count} ${noun} on the property`,
+    );
+
+    const deepLinkedStandId = isInitialLoad ? selectedStandId : null;
 
     syncStandMarkers();
     syncFeatureMarkers();
     renderPanel();
+    // A stand opened from a URL param has no markers to pan to until now.
+    if (deepLinkedStandId) revealSelectedStand(deepLinkedStandId);
     if (!quiet) announce("");
   } catch (error) {
     announce(formatApiError(error), "error");
@@ -499,6 +607,11 @@ document.addEventListener("keydown", (event) => {
   if (event.key === "Escape" && panel.classList.contains("open")) {
     closePanel();
   }
+});
+
+// Tapping bare map dismisses the panel: on a phone the Close button is a reach.
+map.on("click", () => {
+  if (panel.classList.contains("open")) closePanel();
 });
 
 window.addEventListener("popstate", () => {

@@ -6,7 +6,7 @@
       "type": "ladder",
       "lat": 35.645363,
       "lng": -78.442916,
-      "capacity": 1,
+      "capacity": 2,
       "preferred_winds": []
     },
     {
@@ -15,7 +15,7 @@
       "type": "box",
       "lat": 35.644149,
       "lng": -78.441524,
-      "capacity": 1,
+      "capacity": 2,
       "preferred_winds": []
     },
     {
@@ -42,7 +42,7 @@
       "type": "ladder",
       "lat": 35.656137,
       "lng": -78.439421,
-      "capacity": 1,
+      "capacity": 2,
       "preferred_winds": []
     },
     {
@@ -51,7 +51,7 @@
       "type": "box",
       "lat": 35.648639,
       "lng": -78.451494,
-      "capacity": 1,
+      "capacity": 2,
       "preferred_winds": []
     },
     {

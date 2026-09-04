@@ -14,7 +14,18 @@
   <body>
     <header class="top-bar">
       <h1>Black Creek Hunt</h1>
-      <p id="live-count" aria-live="polite">Loading live count…</p>
+      <p
+        id="live-counter"
+        class="live-counter"
+        data-active="false"
+        role="status"
+        aria-live="polite"
+        aria-atomic="true"
+      >
+        <span class="live-indicator" aria-hidden="true"></span>
+        <strong id="live-count-value">—</strong>
+        <span id="live-count-label">Loading…</span>
+      </p>
     </header>
 
     <main>
@@ -42,7 +53,8 @@
         <fieldset>
           <legend>Check in</legend>
           <p class="form-help">
-            Add up to two guests. Each person must use a different open stand.
+            Add up to two guests. People may share a stand when it has enough
+            available seats.
           </p>
           <div id="guest-fields"></div>
           <div class="form-actions">
