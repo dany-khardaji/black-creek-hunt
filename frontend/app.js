@@ -16,6 +16,32 @@ L.tileLayer(
 ).addTo(map);
 map.attributionControl.setPrefix(false);
 
+// Leaflet caches the container size at init, so it must be told when the
+// viewport changes: rotation, and mobile browser chrome collapsing or expanding.
+let resizeFrame = 0;
+function resizeMapToViewport() {
+  // Toolbar animations fire a burst of resizes; settle on the last one.
+  cancelAnimationFrame(resizeFrame);
+  resizeFrame = requestAnimationFrame(() => {
+    map.invalidateSize({ animate: false, pan: false });
+  });
+}
+
+if (window.ResizeObserver) {
+  new ResizeObserver(resizeMapToViewport).observe(
+    document.getElementById("map"),
+  );
+} else {
+  window.addEventListener("resize", resizeMapToViewport);
+  window.addEventListener("orientationchange", resizeMapToViewport);
+}
+
+// visualViewport tracks toolbar collapse that never fires a window resize.
+window.visualViewport?.addEventListener("resize", resizeMapToViewport);
+
+// Covers the bfcache restore path, where no resize fires at all.
+window.addEventListener("pageshow", resizeMapToViewport);
+
 // Tooltips are hover-driven, so on touch they never fire and the panel carries
 // the same information in a readable form. Skip binding them entirely there.
 const hasHover = window.matchMedia("(hover: hover)").matches;

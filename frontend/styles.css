@@ -26,10 +26,12 @@
   box-sizing: border-box;
 }
 
+/* No percentage height chain here on purpose: every layer is position:fixed and
+   sizes itself against the viewport, so nothing inherits a stale height while
+   iOS Safari restores the page. */
 html,
 body {
   width: 100%;
-  height: 100%;
   margin: 0;
   overflow: hidden;
   background: var(--surface-strong);
@@ -72,15 +74,20 @@ button:disabled {
   display: none !important;
 }
 
+/* Pinned to the viewport rather than sized in dvh: iOS Safari reports a stale
+   dynamic-viewport height while restoring a page, which left the map short and
+   the area below it black. A fixed inset sidesteps the percentage-height chain
+   through html/body entirely. */
 #map {
+  position: fixed;
+  inset: 0;
   width: 100%;
-  height: 100vh;
-  height: 100dvh;
-  background: #000;
+  height: 100%;
+  background: var(--surface-strong);
 }
 
 .top-bar {
-  position: absolute;
+  position: fixed;
   z-index: 800;
   top: 0;
   left: 0;
@@ -154,7 +161,7 @@ button:disabled {
 }
 
 #app-message {
-  position: absolute;
+  position: fixed;
   z-index: 850;
   top: 4.25rem;
   left: 50%;
@@ -173,7 +180,7 @@ button:disabled {
 }
 
 .legend {
-  position: absolute;
+  position: fixed;
   z-index: 800;
   bottom: 1rem;
   left: 1rem;
@@ -202,7 +209,7 @@ button:disabled {
 }
 
 #panel {
-  position: absolute;
+  position: fixed;
   z-index: 1000;
   inset: 0 0 0 auto;
   width: min(25rem, 100%);
