@@ -11,17 +11,50 @@ const API_URL =
 const MIN_MAP_ZOOM = 8;
 const PAN_BOUNDS_PADDING_RATIO = 5;
 const PAGE_ZOOM_THRESHOLD = 1.01;
+const DEFAULT_MAP_CENTER = [35.645, -78.442];
+const DEFAULT_MAP_ZOOM = 15;
 const map = L.map("map", {
   zoomControl: true,
   minZoom: MIN_MAP_ZOOM,
   maxBoundsViscosity: 1,
-}).setView([35.645, -78.442], 15);
+}).setView(DEFAULT_MAP_CENTER, DEFAULT_MAP_ZOOM);
 map.zoomControl.setPosition("bottomleft");
 L.tileLayer(
   "https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}",
   { attribution: "Imagery &copy; Esri", maxZoom: 19 },
 ).addTo(map);
 map.attributionControl.setPrefix(false);
+
+const zoomControlContainer = map.zoomControl.getContainer();
+const propertyViewButton = L.DomUtil.create(
+  "a",
+  "leaflet-control-property-view",
+);
+propertyViewButton.href = "#";
+propertyViewButton.title = "Reset property view";
+propertyViewButton.setAttribute("role", "button");
+propertyViewButton.setAttribute("aria-label", "Reset property view");
+propertyViewButton.innerHTML = `
+  <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+    <path d="M9 4H4v5M15 4h5v5M20 15v5h-5M9 20H4v-5" />
+    <circle cx="12" cy="12" r="2.5" />
+  </svg>
+`;
+zoomControlContainer.insertBefore(
+  propertyViewButton,
+  zoomControlContainer.firstChild,
+);
+
+L.DomEvent.on(propertyViewButton, "click", (event) => {
+  L.DomEvent.stop(event);
+  map.stop();
+  map.setView(DEFAULT_MAP_CENTER, DEFAULT_MAP_ZOOM, {
+    animate: !window.matchMedia("(prefers-reduced-motion: reduce)").matches,
+  });
+
+  if (panel.classList.contains("open")) closePanel();
+  propertyViewButton.blur();
+});
 
 // Leaflet caches the container size at init, so it must be told when the
 // viewport changes: rotation, and mobile browser chrome collapsing or expanding.

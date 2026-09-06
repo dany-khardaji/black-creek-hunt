@@ -598,6 +598,21 @@ select {
   right: env(safe-area-inset-right);
 }
 
+.leaflet-control-zoom.leaflet-bar .leaflet-control-property-view {
+  display: grid;
+  place-items: center;
+}
+
+.leaflet-control-property-view svg {
+  width: 20px;
+  height: 20px;
+  fill: none;
+  stroke: currentColor;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  stroke-width: 1.8;
+}
+
 .leaflet-bottom.leaflet-left .leaflet-control-zoom {
   margin-bottom: 4.25rem;
   margin-left: 1rem;
@@ -675,6 +690,7 @@ select {
   .leaflet-bottom.leaflet-left .leaflet-control-zoom {
     margin-left: 0.75rem;
   }
+
 }
 
 @media (prefers-reduced-motion: reduce) {
