@@ -8,7 +8,14 @@ const API_URL =
       ? `${location.protocol}//${location.hostname}:8000`
       : "";
 
-const map = L.map("map", { zoomControl: true }).setView([35.645, -78.442], 15);
+const MIN_MAP_ZOOM = 8;
+const PAN_BOUNDS_PADDING_RATIO = 5;
+const PAGE_ZOOM_THRESHOLD = 1.01;
+const map = L.map("map", {
+  zoomControl: true,
+  minZoom: MIN_MAP_ZOOM,
+  maxBoundsViscosity: 1,
+}).setView([35.645, -78.442], 15);
 map.zoomControl.setPosition("bottomleft");
 L.tileLayer(
   "https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}",
@@ -27,6 +34,35 @@ function resizeMapToViewport() {
   });
 }
 
+const pageZoomHint = document.getElementById("page-zoom-hint");
+let isPageZoomRecoveryActive = false;
+
+// iOS permits page pinch-zoom over the check-in sheet. Leaflet normally owns
+// every gesture over the map, which can trap the page at that enlarged scale
+// after the sheet closes. At page scales above 1x, release Leaflet's touch
+// handlers so Safari can receive a pinch-out anywhere over the map.
+function setPageZoomRecovery(isActive) {
+  if (isActive === isPageZoomRecoveryActive) return;
+
+  isPageZoomRecoveryActive = isActive;
+  map.getContainer().classList.toggle("page-zoom-recovery", isActive);
+  pageZoomHint.hidden = !isActive;
+
+  if (isActive) {
+    map.touchZoom.disable();
+    map.dragging.disable();
+  } else {
+    map.touchZoom.enable();
+    map.dragging.enable();
+    resizeMapToViewport();
+  }
+}
+
+function syncPageZoomRecovery() {
+  const pageScale = window.visualViewport?.scale ?? 1;
+  setPageZoomRecovery(pageScale > PAGE_ZOOM_THRESHOLD);
+}
+
 if (window.ResizeObserver) {
   new ResizeObserver(resizeMapToViewport).observe(
     document.getElementById("map"),
@@ -36,11 +72,18 @@ if (window.ResizeObserver) {
   window.addEventListener("orientationchange", resizeMapToViewport);
 }
 
-// visualViewport tracks toolbar collapse that never fires a window resize.
-window.visualViewport?.addEventListener("resize", resizeMapToViewport);
+// visualViewport tracks toolbar collapse and page pinch-zoom changes that never
+// fire a window resize.
+window.visualViewport?.addEventListener("resize", () => {
+  resizeMapToViewport();
+  syncPageZoomRecovery();
+});
 
 // Covers the bfcache restore path, where no resize fires at all.
-window.addEventListener("pageshow", resizeMapToViewport);
+window.addEventListener("pageshow", () => {
+  resizeMapToViewport();
+  syncPageZoomRecovery();
+});
 
 // Tooltips are hover-driven, so on touch they never fire and the panel carries
 // the same information in a readable form. Skip binding them entirely there.
@@ -310,7 +353,7 @@ function renderPanel() {
     <span class="status-label" style="--status-color: ${statusColor(stand.status)}">
       ${escapeHtml(statusText)}
     </span>
-    <p class="capacity-summary"><strong>${occupiedCount}/${capacity}</strong> ${seatWord} occupied · ${availableSeats} available</p>
+    <p class="capacity-summary"><strong>${occupiedCount}/${capacity}</strong> ${seatWord} occupied</p>
     ${occupantList}
   `;
 
@@ -326,6 +369,7 @@ function renderPanel() {
     renderPanelMessage();
   }
 
+  panel.inert = false;
   panel.classList.add("open");
   panel.setAttribute("aria-hidden", "false");
 }
@@ -369,10 +413,18 @@ function openPanel(standId, { updateUrl = true, focusHeading = true } = {}) {
 
 function closePanel({ updateUrl = true } = {}) {
   captureDraft();
+
+  if (panel.contains(document.activeElement)) {
+    document.activeElement.blur();
+  }
+
   selectedStandId = null;
   panel.classList.remove("open");
   panel.setAttribute("aria-hidden", "true");
+  panel.inert = true;
   syncStandMarkers();
+  syncPageZoomRecovery();
+  resizeMapToViewport();
 
   if (updateUrl) {
     const url = new URL(location.href);
@@ -496,6 +548,28 @@ function syncFeatureMarkers() {
   }
 }
 
+function syncMapPanBounds() {
+  const standLocations = mapState.stands
+    .filter(
+      (stand) =>
+        !stand.retired &&
+        Number.isFinite(Number(stand.lat)) &&
+        Number.isFinite(Number(stand.lng)),
+    )
+    .map((stand) => L.latLng(Number(stand.lat), Number(stand.lng)));
+
+  if (standLocations.length === 0) return;
+
+  let panBounds = L.latLngBounds(standLocations);
+  if (panBounds.getNorthEast().equals(panBounds.getSouthWest())) {
+    panBounds = standLocations[0].toBounds(20_000);
+  } else {
+    panBounds = panBounds.pad(PAN_BOUNDS_PADDING_RATIO);
+  }
+
+  map.setMaxBounds(panBounds);
+}
+
 async function refreshMapState({
   quiet = false,
   captureCurrentDraft = true,
@@ -509,6 +583,7 @@ async function refreshMapState({
   try {
     const data = await requestJson("/api/map-state");
     mapState = data;
+    syncMapPanBounds();
 
     const noun = data.live_count === 1 ? "Hunter" : "Hunters";
     liveCountValue.textContent = data.live_count;

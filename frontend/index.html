@@ -2,7 +2,10 @@
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta
+      name="viewport"
+      content="width=device-width, initial-scale=1, viewport-fit=cover"
+    />
     <!-- Tints mobile browser chrome to match the app surface instead of black. -->
     <meta name="theme-color" content="#121412" />
     <title>Black Creek Hunt</title>
@@ -15,7 +18,13 @@
   </head>
   <body>
     <header class="top-bar">
-      <h1>Black Creek Hunt</h1>
+      <img
+        class="brand-logo"
+        src="./assets/black-creek-hunt-logo.png"
+        alt="Black Creek Hunt"
+        width="2172"
+        height="724"
+      />
       <p
         id="live-counter"
         class="live-counter"
@@ -33,6 +42,9 @@
     <main>
       <div id="map" aria-label="Interactive map of hunting stands"></div>
       <p id="app-message" role="status" aria-live="polite">Loading map…</p>
+      <p id="page-zoom-hint" role="status" aria-live="polite" hidden>
+        Page zoomed — pinch out to return to the map
+      </p>
 
       <div class="legend" aria-label="Stand status legend">
         <span><i style="--marker-color: var(--open)"></i>Open</span>
@@ -41,7 +53,7 @@
       </div>
     </main>
 
-    <aside id="panel" aria-labelledby="panel-name" aria-hidden="true">
+    <aside id="panel" aria-labelledby="panel-name" aria-hidden="true" inert>
       <div class="panel-header">
         <h2 id="panel-name" tabindex="-1"></h2>
         <button id="panel-close" type="button" aria-label="Close stand panel">
