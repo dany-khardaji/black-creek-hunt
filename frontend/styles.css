@@ -649,7 +649,7 @@ select {
 }
 
 .leaflet-container .leaflet-control-attribution {
-  margin: 0 0.6rem 0.6rem 0;
+  margin: 0 0.6rem 1rem 0;
   border: 1px solid var(--border);
   border-radius: 999px;
   padding: 0.28rem 0.52rem;
@@ -675,6 +675,11 @@ select {
     border-left: 0;
     border-radius: 18px 18px 0 0;
     padding-bottom: calc(1rem + env(safe-area-inset-bottom));
+    /* Keep form swipes scrollable without letting a pinch magnify the page
+       underneath Leaflet's independently transformed image tiles. */
+    touch-action: pan-y;
+    overscroll-behavior-y: contain;
+    -webkit-overflow-scrolling: touch;
     transform: translateY(102%);
   }
 
@@ -689,6 +694,10 @@ select {
 
   .leaflet-bottom.leaflet-left .leaflet-control-zoom {
     margin-left: 0.75rem;
+  }
+
+  .leaflet-container .leaflet-control-attribution {
+    margin-bottom: 0.75rem;
   }
 
 }
