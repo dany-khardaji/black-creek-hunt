@@ -1,0 +1,108 @@
+/* Homepage: a scrolling list of properties. Unlike the map page, this page is
+   ordinary document flow and is allowed to scroll. */
+
+body {
+  min-height: 100dvh;
+}
+
+.home-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  padding:
+    calc(1rem + env(safe-area-inset-top))
+    calc(1rem + env(safe-area-inset-right))
+    1rem
+    calc(1rem + env(safe-area-inset-left));
+  border-bottom: 1px solid var(--border);
+}
+
+.brand-logo {
+  display: block;
+  width: clamp(11rem, 24.2vw, 19.8rem);
+  height: auto;
+  object-fit: contain;
+  object-position: left center;
+}
+
+.home-main {
+  max-width: 60rem;
+  margin: 0 auto;
+  padding:
+    2rem
+    calc(1rem + env(safe-area-inset-right))
+    calc(3rem + env(safe-area-inset-bottom))
+    calc(1rem + env(safe-area-inset-left));
+}
+
+.home-heading {
+  margin: 0 0 0.35rem;
+  font-size: 1.75rem;
+  letter-spacing: -0.01em;
+}
+
+#home-message {
+  min-height: 1.4rem;
+  margin: 0 0 1.5rem;
+  color: var(--muted);
+}
+
+#home-message[data-tone="error"] {
+  color: var(--overdue);
+}
+
+.property-list {
+  display: grid;
+  gap: 1rem;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  grid-template-columns: repeat(auto-fill, minmax(16rem, 1fr));
+}
+
+/* The whole card is one link, so the entire surface is a tap target. */
+.property-card {
+  display: grid;
+  gap: 0.4rem;
+  height: 100%;
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  padding: 1.15rem;
+  background: var(--surface-raised);
+  color: inherit;
+  text-decoration: none;
+  transition: border-color 160ms ease-out, transform 160ms ease-out;
+}
+
+.property-card:hover {
+  border-color: var(--active);
+  transform: translateY(-2px);
+}
+
+.property-card:focus-visible {
+  outline: 3px solid var(--focus);
+  outline-offset: 2px;
+}
+
+.property-card h2 {
+  margin: 0;
+  font-size: 1.15rem;
+}
+
+.property-card p {
+  margin: 0;
+  color: var(--muted);
+  font-size: 0.9rem;
+  line-height: 1.45;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .property-card {
+    transition: none;
+  }
+
+  .property-card:hover {
+    transform: none;
+  }
+}

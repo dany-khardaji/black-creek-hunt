@@ -1,0 +1,68 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta
+      name="viewport"
+      content="width=device-width, initial-scale=1, viewport-fit=cover"
+    />
+    <!-- Tints mobile browser chrome to match the app surface instead of black. -->
+    <meta name="theme-color" content="#121412" />
+    <title>Sign in · Black Creek Hunt</title>
+    <link rel="stylesheet" href="./base.css" />
+    <link rel="stylesheet" href="./login.css" />
+  </head>
+  <body>
+    <main class="login-main">
+      <div class="login-card">
+        <img
+          class="login-logo"
+          src="./assets/black-creek-hunt-logo.png"
+          alt="Black Creek Hunt"
+          width="2172"
+          height="724"
+        />
+
+        <p class="login-intro">Members only. Sign in to see the properties.</p>
+
+        <!-- Server-side OAuth: a plain link, no JavaScript library required.
+             The endpoint is added in Slice 4. -->
+        <a class="google-button" href="/api/auth/google/login">
+          Continue with Google
+        </a>
+
+        <p class="login-divider"><span>or</span></p>
+
+        <form id="password-form" class="password-form" novalidate>
+          <label for="login-email">
+            Email
+            <input
+              id="login-email"
+              name="email"
+              type="email"
+              autocomplete="email"
+              required
+            />
+          </label>
+
+          <label for="login-password">
+            Password
+            <input
+              id="login-password"
+              name="password"
+              type="password"
+              autocomplete="current-password"
+              required
+            />
+          </label>
+
+          <button class="primary-action" type="submit">Sign in</button>
+        </form>
+
+        <p id="login-message" role="status" aria-live="polite"></p>
+      </div>
+    </main>
+
+    <script src="./login.js"></script>
+  </body>
+</html>

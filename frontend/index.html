@@ -9,15 +9,11 @@
     <!-- Tints mobile browser chrome to match the app surface instead of black. -->
     <meta name="theme-color" content="#121412" />
     <title>Black Creek Hunt</title>
-    <link
-      rel="stylesheet"
-      href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
-    />
-    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
-    <link rel="stylesheet" href="./styles.css" />
+    <link rel="stylesheet" href="./base.css" />
+    <link rel="stylesheet" href="./home.css" />
   </head>
   <body>
-    <header class="top-bar">
+    <header class="home-bar">
       <img
         class="brand-logo"
         src="./assets/black-creek-hunt-logo.png"
@@ -39,49 +35,14 @@
       </p>
     </header>
 
-    <main>
-      <div id="map" aria-label="Interactive map of hunting stands"></div>
-      <p id="app-message" role="status" aria-live="polite">Loading map…</p>
-      <p id="page-zoom-hint" role="status" aria-live="polite" hidden>
-        Page zoomed — pinch out to return to the map
-      </p>
+    <main class="home-main">
+      <h1 class="home-heading">Properties</h1>
+      <p id="home-message" role="status" aria-live="polite">Loading properties…</p>
 
-      <div class="legend" aria-label="Stand status legend">
-        <span><i style="--marker-color: var(--open)"></i>Open</span>
-        <span><i style="--marker-color: var(--active)"></i>Active</span>
-        <span><i style="--marker-color: var(--overdue)"></i>Overdue</span>
-      </div>
+      <!-- Cards are rendered by home.js from GET /api/properties. -->
+      <ul id="property-list" class="property-list"></ul>
     </main>
 
-    <aside id="panel" aria-labelledby="panel-name" aria-hidden="true" inert>
-      <div class="panel-header">
-        <h2 id="panel-name" tabindex="-1"></h2>
-        <button id="panel-close" type="button" aria-label="Close stand panel">
-          Close
-        </button>
-      </div>
-
-      <div id="panel-status"></div>
-
-      <form id="check-in-form" novalidate hidden>
-        <fieldset>
-          <legend>Check in</legend>
-          <p class="form-help">
-            Add up to two guests. People may share a stand when it has enough
-            available seats.
-          </p>
-          <div id="guest-fields"></div>
-          <div class="form-actions">
-            <button id="add-guest" type="button">Add guest</button>
-            <button class="primary-action" type="submit">Check in</button>
-          </div>
-        </fieldset>
-      </form>
-
-      <button id="check-out-button" type="button" hidden>Check out</button>
-      <p id="panel-message" role="status" aria-live="polite"></p>
-    </aside>
-
-    <script src="./app.js"></script>
+    <script src="./home.js"></script>
   </body>
 </html>

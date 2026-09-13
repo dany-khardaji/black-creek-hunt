@@ -1,0 +1,100 @@
+/* Sign-in page: one centered card. Google is the primary path; the password
+   form is present but deliberately quieter. */
+
+.login-main {
+  display: grid;
+  place-items: center;
+  min-height: 100dvh;
+  padding:
+    calc(1.5rem + env(safe-area-inset-top))
+    calc(1rem + env(safe-area-inset-right))
+    calc(1.5rem + env(safe-area-inset-bottom))
+    calc(1rem + env(safe-area-inset-left));
+}
+
+.login-card {
+  display: grid;
+  gap: 1rem;
+  width: min(24rem, 100%);
+  border: 1px solid var(--border);
+  border-radius: 16px;
+  padding: 1.75rem;
+  background: var(--surface-raised);
+}
+
+.login-logo {
+  display: block;
+  width: 100%;
+  max-width: 15rem;
+  height: auto;
+  margin: 0 auto 0.25rem;
+  object-fit: contain;
+}
+
+.login-intro {
+  margin: 0;
+  color: var(--muted);
+  font-size: 0.9rem;
+  line-height: 1.45;
+  text-align: center;
+}
+
+.google-button {
+  display: grid;
+  min-height: 44px;
+  place-items: center;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 0.65rem 0.9rem;
+  background: var(--text);
+  color: var(--surface-strong);
+  font-weight: 700;
+  text-decoration: none;
+}
+
+.google-button:hover {
+  border-color: var(--active);
+}
+
+.google-button:focus-visible {
+  outline: 3px solid var(--focus);
+  outline-offset: 2px;
+}
+
+/* A centered "or" with a rule running through it. */
+.login-divider {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  margin: 0;
+  color: var(--muted);
+  font-size: 0.78rem;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+
+.login-divider::before,
+.login-divider::after {
+  height: 1px;
+  flex: 1;
+  background: var(--border);
+  content: "";
+}
+
+.password-form {
+  display: grid;
+  gap: 0.75rem;
+}
+
+#login-message {
+  min-height: 1.4rem;
+  margin: 0;
+  color: var(--muted);
+  font-size: 0.9rem;
+  line-height: 1.4;
+  text-align: center;
+}
+
+#login-message[data-tone="error"] {
+  color: var(--overdue);
+}
