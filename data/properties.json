@@ -1,0 +1,31 @@
+{
+  "properties": [
+    {
+      "id": "black-creek",
+      "slug": "black-creek",
+      "name": "Black Creek",
+      "description": "The home tract. Hardwood bottoms along the creek with planted fields to the east.",
+      "center_lat": 35.645,
+      "center_lng": -78.442,
+      "default_zoom": 15
+    },
+    {
+      "id": "mill-branch",
+      "slug": "mill-branch",
+      "name": "Mill Branch",
+      "description": "Mixed pine and hardwood with a beaver pond on the north line.",
+      "center_lat": 35.6712,
+      "center_lng": -78.4884,
+      "default_zoom": 15
+    },
+    {
+      "id": "cedar-ridge",
+      "slug": "cedar-ridge",
+      "name": "Cedar Ridge",
+      "description": "High ground with cutover on the south end. Good early season sign.",
+      "center_lat": 35.6118,
+      "center_lng": -78.4021,
+      "default_zoom": 15
+    }
+  ]
+}

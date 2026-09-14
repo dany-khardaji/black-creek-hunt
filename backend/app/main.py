@@ -1,7 +1,7 @@
 from collections import Counter
 from datetime import datetime, timezone
 
-from app.database import get_connection
+from app.database import PRIMARY_PROPERTY_ID, get_connection
 from app.models import CheckInRequest
 from app.sessions import active_hunt_count, is_hunt_overdue, session_boundary
 from fastapi import FastAPI, HTTPException
@@ -16,6 +16,8 @@ CURRENT_MEMBER_ID = "member-1"
 origins = [
     "http://localhost:5500",
     "http://127.0.0.1:5500",
+    "http://localhost:5501",
+    "http://127.0.0.1:5501",
     "http://192.168.50.75:5500",
 ]
 app.add_middleware(
@@ -66,6 +68,71 @@ def utc_now():
     return datetime.now(timezone.utc)
 
 
+# Lists the properties shown on the homepage.
+@app.get("/api/properties")
+def list_properties():
+    conn = get_connection()
+    try:
+        return conn.execute(
+            """
+            SELECT id, slug, name, description, center_lat, center_lng, default_zoom
+            FROM properties
+            WHERE is_active = 1
+            ORDER BY name
+            """
+        ).fetchall()
+    finally:
+        conn.close()
+
+
+# Returns one property, including the map center and zoom its page needs.
+@app.get("/api/properties/{slug}")
+def get_property(slug: str):
+    conn = get_connection()
+    try:
+        row = conn.execute(
+            """
+            SELECT id, slug, name, description, center_lat, center_lng, default_zoom
+            FROM properties
+            WHERE slug = ? AND is_active = 1
+            """,
+            (slug,),
+        ).fetchone()
+
+        if row is None:
+            raise HTTPException(
+                status_code=404,
+                detail={
+                    "code": "property_not_found",
+                    "message": f"Property {slug} was not found",
+                },
+            )
+        return row
+    finally:
+        conn.close()
+
+
+# Club-wide active hunter total, across every property. Powers the homepage
+# counter; the property page uses the per-property count in map-state instead.
+@app.get("/api/live-count")
+def get_live_count():
+    conn = get_connection()
+    boundary = session_boundary(utc_now()).isoformat()
+
+    try:
+        live_count = conn.execute(
+            """
+            SELECT COUNT(*) FROM hunts
+            WHERE checked_out_at IS NULL
+            AND checked_in_at > ?
+            """,
+            (boundary,),
+        ).fetchone()[0]
+        return {"live_count": live_count}
+    finally:
+        conn.close()
+
+
 # Returns every non-retired stand in the database.
 @app.get("/api/stands")
 def list_stands():
@@ -106,6 +173,17 @@ def check_in(request: CheckInRequest):
             requested_ids,
         ).fetchall()
         stands_by_id = {stand["id"]: stand for stand in rows}
+
+        # A hunt happens on one property: a host cannot seat a guest elsewhere.
+        property_ids = {stand["property_id"] for stand in rows}
+        if len(property_ids) > 1:
+            raise HTTPException(
+                status_code=409,
+                detail={
+                    "code": "stands_span_properties",
+                    "message": "Every stand in a check-in must be on the same property",
+                },
+            )
 
         # Validate every requested stand before writing the host or any guest row.
         for stand_id in requested_ids:
@@ -261,16 +339,29 @@ def check_out(hunt_id: int):
         conn.close()
 
 
-# Returns everything the map needs in one call.
+# Returns everything one property's map needs in one call.
 @app.get("/api/map-state")
-def get_map_state():
+def get_map_state(property: str = PRIMARY_PROPERTY_ID):
     conn = get_connection()
     now = utc_now()
     boundary = session_boundary(now).isoformat()
 
     try:
+        property_row = conn.execute(
+            "SELECT id FROM properties WHERE slug = ? AND is_active = 1",
+            (property,),
+        ).fetchone()
+        # Databases seeded before properties existed have no rows in that table,
+        # so fall back to the implicit primary property rather than 404ing.
+        property_id = property_row["id"] if property_row else PRIMARY_PROPERTY_ID
+
         stands = conn.execute(
-            "SELECT * FROM stands WHERE is_retired = 0 ORDER BY name"
+            """
+            SELECT * FROM stands
+            WHERE is_retired = 0 AND property_id = ?
+            ORDER BY name
+            """,
+            (property_id,),
         ).fetchall()
         stand_states = []
 
@@ -373,14 +464,19 @@ def get_map_state():
                 }
             )
 
-        features = conn.execute("SELECT * FROM map_features").fetchall()
+        features = conn.execute(
+            "SELECT * FROM map_features WHERE property_id = ?", (property_id,)
+        ).fetchall()
+        # Scoped to this property: the map shows who is out here, not club-wide.
         live_count = conn.execute(
             """
             SELECT COUNT(*) FROM hunts
-            WHERE checked_out_at IS NULL
-            AND checked_in_at > ?
+            JOIN stands ON stands.id = hunts.stand_id
+            WHERE hunts.checked_out_at IS NULL
+            AND hunts.checked_in_at > ?
+            AND stands.property_id = ?
             """,
-            (boundary,),
+            (boundary, property_id),
         ).fetchone()[0]
 
         return {

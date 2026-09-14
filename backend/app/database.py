@@ -5,8 +5,23 @@ DB_PATH = (
     Path(__file__).parent.parent / "blackcreek.db"
 )  # Points at backend/blackcreek.db no matter where you run
 
+# The club's default property. Stands and features created without an explicit
+# property fall here, which keeps existing rows and test fixtures valid.
+PRIMARY_PROPERTY_ID = "black-creek"
+
 # Table structure for the whole app
-SCHEMA = """
+SCHEMA = f"""
+    CREATE TABLE IF NOT EXISTS properties (
+        id TEXT PRIMARY KEY,
+        slug TEXT UNIQUE NOT NULL,
+        name TEXT NOT NULL,
+        description TEXT,
+        center_lat REAL NOT NULL,
+        center_lng REAL NOT NULL,
+        default_zoom INTEGER NOT NULL DEFAULT 15,
+        is_active INTEGER NOT NULL DEFAULT 1 CHECK (is_active IN (0, 1))
+    );
+
     CREATE TABLE IF NOT EXISTS stands (
         id TEXT PRIMARY KEY,
         name TEXT NOT NULL,
@@ -15,7 +30,9 @@ SCHEMA = """
         lng REAL NOT NULL,
         capacity INTEGER NOT NULL DEFAULT 1,
         preferred_winds TEXT,
-        is_retired INTEGER NOT NULL DEFAULT 0 CHECK (is_retired IN (0, 1))
+        is_retired INTEGER NOT NULL DEFAULT 0 CHECK (is_retired IN (0, 1)),
+        property_id TEXT NOT NULL DEFAULT '{PRIMARY_PROPERTY_ID}'
+            REFERENCES properties(id)
     );
 
     CREATE TABLE IF NOT EXISTS map_features (
@@ -23,7 +40,9 @@ SCHEMA = """
         name TEXT NOT NULL,
         type TEXT NOT NULL,
         lat REAL NOT NULL,
-        lng REAL NOT NULL
+        lng REAL NOT NULL,
+        property_id TEXT NOT NULL DEFAULT '{PRIMARY_PROPERTY_ID}'
+            REFERENCES properties(id)
     );
 
     CREATE TABLE IF NOT EXISTS members (
@@ -93,7 +112,30 @@ def ensure_current_schema(conn):
             "CREATE INDEX IF NOT EXISTS idx_hunts_host_hunt_id ON hunts(host_hunt_id)"
         )
 
-    if stand_columns or hunt_columns:
+    feature_columns = {
+        row["name"]
+        for row in conn.execute("PRAGMA table_info(map_features)").fetchall()
+    }
+
+    # Databases created before properties existed get the column with every
+    # existing row assigned to the primary property.
+    #
+    # No REFERENCES clause here: SQLite refuses to ADD COLUMN a foreign key that
+    # has a non-null default. Fresh databases still get the constraint from
+    # SCHEMA; migrated ones carry the column and default without it.
+    if stand_columns and "property_id" not in stand_columns:
+        conn.execute(
+            "ALTER TABLE stands ADD COLUMN property_id TEXT NOT NULL "
+            f"DEFAULT '{PRIMARY_PROPERTY_ID}'"
+        )
+
+    if feature_columns and "property_id" not in feature_columns:
+        conn.execute(
+            "ALTER TABLE map_features ADD COLUMN property_id TEXT NOT NULL "
+            f"DEFAULT '{PRIMARY_PROPERTY_ID}'"
+        )
+
+    if stand_columns or hunt_columns or feature_columns:
         conn.commit()
 
 
