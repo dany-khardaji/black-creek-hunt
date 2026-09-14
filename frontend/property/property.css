@@ -60,59 +60,6 @@ body {
   filter: drop-shadow(0 3px 9px rgba(0, 0, 0, 0.72));
 }
 
-.live-counter {
-  display: inline-flex;
-  align-items: center;
-  gap: 0.42rem;
-  margin: 0;
-  border: 1px solid var(--border);
-  border-radius: 999px;
-  padding: 0.48rem 0.72rem;
-  background: rgba(18, 20, 18, 0.84);
-  box-shadow: 0 5px 18px rgba(0, 0, 0, 0.26);
-  color: var(--muted);
-  font-size: 0.82rem;
-  font-variant-numeric: tabular-nums;
-  line-height: 1;
-  backdrop-filter: blur(10px);
-  -webkit-backdrop-filter: blur(10px);
-}
-
-.live-counter strong {
-  color: var(--text);
-  font-size: 1rem;
-  font-weight: 800;
-}
-
-.live-indicator {
-  width: 0.58rem;
-  height: 0.58rem;
-  border: 1px solid var(--open);
-  border-radius: 50%;
-  background: transparent;
-}
-
-.live-counter[data-active="true"] {
-  border-color: rgba(85, 217, 139, 0.28);
-}
-
-.live-counter[data-active="true"] .live-indicator {
-  border-color: var(--live);
-  background: var(--live);
-  box-shadow:
-    0 0 0 3px rgba(85, 217, 139, 0.14),
-    0 0 12px rgba(85, 217, 139, 0.8);
-  animation: live-glow 2.4s ease-in-out infinite;
-}
-
-@keyframes live-glow {
-  50% {
-    box-shadow:
-      0 0 0 4px rgba(85, 217, 139, 0.1),
-      0 0 18px rgba(85, 217, 139, 0.95);
-  }
-}
-
 #app-message {
   position: fixed;
   z-index: 850;
@@ -651,10 +598,6 @@ select {
 @media (prefers-reduced-motion: reduce) {
   #panel {
     transition: none;
-  }
-
-  .live-counter[data-active="true"] .live-indicator {
-    animation: none;
   }
 
   .stand-marker.occupied .gauge-fill {

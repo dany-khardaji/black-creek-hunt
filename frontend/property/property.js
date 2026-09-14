@@ -11,8 +11,16 @@ const API_URL =
 const MIN_MAP_ZOOM = 8;
 const PAN_BOUNDS_PADDING_RATIO = 5;
 const PAGE_ZOOM_THRESHOLD = 1.01;
-const DEFAULT_MAP_CENTER = [35.645, -78.442];
-const DEFAULT_MAP_ZOOM = 15;
+
+// Which property this page is showing. The homepage links here with ?property=.
+const PROPERTY_SLUG =
+  new URLSearchParams(location.search).get("property") || "black-creek";
+
+// Leaflet needs a center at construction time, before the property has loaded.
+// These are the starting values; loadProperty() replaces them once the real
+// center and zoom arrive.
+let DEFAULT_MAP_CENTER = [35.645, -78.442];
+let DEFAULT_MAP_ZOOM = 15;
 const map = L.map("map", {
   zoomControl: true,
   minZoom: MIN_MAP_ZOOM,
@@ -614,7 +622,9 @@ async function refreshMapState({
   if (isInitialLoad) announce("Loading map…");
 
   try {
-    const data = await requestJson("/api/map-state");
+    const data = await requestJson(
+      `/api/map-state?property=${encodeURIComponent(PROPERTY_SLUG)}`,
+    );
     mapState = data;
     syncMapPanBounds();
 
@@ -757,5 +767,27 @@ window.addEventListener("popstate", () => {
   }
 });
 
+// Recenters the map on the property this page is showing and titles the tab.
+// Runs alongside the first map-state fetch rather than blocking it.
+async function loadProperty() {
+  try {
+    const property = await requestJson(
+      `/api/properties/${encodeURIComponent(PROPERTY_SLUG)}`,
+    );
+    DEFAULT_MAP_CENTER = [property.center_lat, property.center_lng];
+    DEFAULT_MAP_ZOOM = property.default_zoom;
+    document.title = `${property.name} · Black Creek Hunt`;
+
+    // Only move the map if the member has not already started panning around.
+    if (isInitialLoad) {
+      map.setView(DEFAULT_MAP_CENTER, DEFAULT_MAP_ZOOM, { animate: false });
+    }
+  } catch {
+    // A missing property leaves the starting view in place; map-state will
+    // surface the error to the member.
+  }
+}
+
+loadProperty();
 refreshMapState();
 setInterval(() => refreshMapState(), 30000);

@@ -1,0 +1,135 @@
+:root {
+  color-scheme: dark;
+  font-family:
+    Inter,
+    ui-sans-serif,
+    system-ui,
+    -apple-system,
+    BlinkMacSystemFont,
+    "Segoe UI",
+    sans-serif;
+  --surface: rgba(18, 20, 18, 0.94);
+  --surface-strong: #121412;
+  --surface-raised: #242824;
+  --border: rgba(255, 255, 255, 0.1);
+  --text: #f4f1e8;
+  --muted: #b4bbb1;
+  --open: #8a918a;
+  --active: #ff6b1a;
+  --overdue: #e5484d;
+  --focus: #ff6b1a;
+  --success: #75b987;
+  --live: #55d98b;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+/* Page-level scroll behavior is set per page: the map page locks scrolling,
+   content pages allow it. */
+html,
+body {
+  width: 100%;
+  margin: 0;
+  background: var(--surface-strong);
+  color: var(--text);
+}
+
+
+button,
+input,
+select {
+  min-height: 44px;
+  font: inherit;
+}
+
+button {
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 0.65rem 0.9rem;
+  background: var(--surface-raised);
+  color: var(--text);
+  cursor: pointer;
+}
+
+button:hover:not(:disabled) {
+  border-color: var(--active);
+}
+
+button:focus-visible,
+input:focus-visible,
+select:focus-visible {
+  outline: 3px solid var(--focus);
+  outline-offset: 2px;
+}
+
+button:disabled {
+  cursor: wait;
+  opacity: 0.65;
+}
+
+[hidden] {
+  display: none !important;
+}
+
+/* Live hunter counter. Used by the homepage (club-wide total) and the
+   property page (that property's total). */
+.live-counter {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.42rem;
+  margin: 0;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  padding: 0.48rem 0.72rem;
+  background: rgba(18, 20, 18, 0.84);
+  box-shadow: 0 5px 18px rgba(0, 0, 0, 0.26);
+  color: var(--muted);
+  font-size: 0.82rem;
+  font-variant-numeric: tabular-nums;
+  line-height: 1;
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
+}
+
+.live-counter strong {
+  color: var(--text);
+  font-size: 1rem;
+  font-weight: 800;
+}
+
+.live-indicator {
+  width: 0.58rem;
+  height: 0.58rem;
+  border: 1px solid var(--open);
+  border-radius: 50%;
+  background: transparent;
+}
+
+.live-counter[data-active="true"] {
+  border-color: rgba(85, 217, 139, 0.28);
+}
+
+.live-counter[data-active="true"] .live-indicator {
+  border-color: var(--live);
+  background: var(--live);
+  box-shadow:
+    0 0 0 3px rgba(85, 217, 139, 0.14),
+    0 0 12px rgba(85, 217, 139, 0.8);
+  animation: live-glow 2.4s ease-in-out infinite;
+}
+
+@keyframes live-glow {
+  50% {
+    box-shadow:
+      0 0 0 4px rgba(85, 217, 139, 0.1),
+      0 0 18px rgba(85, 217, 139, 0.95);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .live-counter[data-active="true"] .live-indicator {
+    animation: none;
+  }
+}
