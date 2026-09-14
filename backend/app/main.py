@@ -1,33 +1,18 @@
 from collections import Counter
 from datetime import datetime, timezone
+from pathlib import Path
 
 from app.database import PRIMARY_PROPERTY_ID, get_connection
 from app.models import CheckInRequest
 from app.sessions import active_hunt_count, is_hunt_overdue, session_boundary
 from fastapi import FastAPI, HTTPException
-from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import FileResponse
+from fastapi.staticfiles import StaticFiles
 
 app = FastAPI()
 
 # Authentication replaces this development identity in Slice 3.
 CURRENT_MEMBER_ID = "member-1"
-
-# Frontend addresses that are allowed to call this API during local development.
-origins = [
-    "http://localhost:5500",
-    "http://127.0.0.1:5500",
-    "http://localhost:5501",
-    "http://127.0.0.1:5501",
-    "http://192.168.50.75:5500",
-]
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=origins,
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
-
 
 def error_detail(code, message, stand=None):
     detail = {"code": code, "message": message}
@@ -486,3 +471,37 @@ def get_map_state(property: str = PRIMARY_PROPERTY_ID):
         }
     finally:
         conn.close()
+
+
+# --- Static pages -----------------------------------------------------------
+# The frontend is served from this same app so the browser has one origin for
+# both pages and API. That removes the need for CORS, and gives OAuth a stable
+# redirect target in Slice 4.
+#
+# These are declared after every /api route: the StaticFiles mount at the end
+# is a catch-all and would otherwise shadow them.
+
+FRONTEND = Path(__file__).parent.parent.parent / "frontend"
+
+
+@app.get("/", include_in_schema=False)
+def home_page():
+    return FileResponse(FRONTEND / "home" / "index.html")
+
+
+@app.get("/login", include_in_schema=False)
+def login_page():
+    return FileResponse(FRONTEND / "login" / "index.html")
+
+
+# One page serves every property; property.js reads the slug from the path.
+@app.get("/property/{slug}", include_in_schema=False)
+def property_page(slug: str):
+    return FileResponse(FRONTEND / "property" / "index.html")
+
+
+# Stylesheets, scripts, and images live under /static/ rather than at the root.
+# A root mount is not enough on its own: /property/{slug} is a wildcard that
+# would also match /property/property.css and hand back the HTML page instead,
+# which the browser then refuses to apply as a stylesheet.
+app.mount("/static", StaticFiles(directory=FRONTEND), name="static")

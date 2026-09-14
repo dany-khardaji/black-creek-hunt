@@ -1,20 +1,11 @@
-const usesSeparateLocalServer =
-  location.protocol === "file:" ||
-  (location.port !== "" && location.port !== "8000");
-const API_URL =
-  location.protocol === "file:"
-    ? "http://localhost:8000"
-    : usesSeparateLocalServer
-      ? `${location.protocol}//${location.hostname}:8000`
-      : "";
-
 const MIN_MAP_ZOOM = 8;
 const PAN_BOUNDS_PADDING_RATIO = 5;
 const PAGE_ZOOM_THRESHOLD = 1.01;
 
-// Which property this page is showing. The homepage links here with ?property=.
+// Which property this page is showing. The server serves this one page for
+// every /property/{slug}, so the slug is the last segment of the path.
 const PROPERTY_SLUG =
-  new URLSearchParams(location.search).get("property") || "black-creek";
+  location.pathname.split("/").filter(Boolean).pop() || "black-creek";
 
 // Leaflet needs a center at construction time, before the property has loaded.
 // These are the starting values; loadProperty() replaces them once the real
@@ -202,7 +193,7 @@ async function requestJson(path, options = {}) {
   const headers = new Headers(options.headers || {});
   if (options.body) headers.set("Content-Type", "application/json");
 
-  const response = await fetch(`${API_URL}${path}`, {
+  const response = await fetch(path, {
     credentials: "include",
     ...options,
     headers,

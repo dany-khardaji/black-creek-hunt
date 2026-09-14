@@ -1,18 +1,6 @@
 // Homepage: lists the club's properties and the club-wide live hunter count.
 // The property map lives in property.js; nothing here touches Leaflet.
 
-// In development the page and API are on different ports, so requests need an
-// absolute host. Slice 4 moves both behind one origin and this can be deleted.
-const usesSeparateLocalServer =
-  location.protocol === "file:" ||
-  (location.port !== "" && location.port !== "8000");
-const API_URL =
-  location.protocol === "file:"
-    ? "http://localhost:8000"
-    : usesSeparateLocalServer
-      ? `${location.protocol}//${location.hostname}:8000`
-      : "";
-
 const propertyList = document.getElementById("property-list");
 const homeMessage = document.getElementById("home-message");
 const liveCounter = document.getElementById("live-counter");
@@ -26,7 +14,7 @@ function announce(message, tone = "info") {
 }
 
 async function requestJson(path) {
-  const response = await fetch(`${API_URL}${path}`, { credentials: "include" });
+  const response = await fetch(path, { credentials: "include" });
   if (!response.ok) throw new Error(`Request failed with status ${response.status}`);
   return response.json();
 }
@@ -44,7 +32,7 @@ function renderProperties(properties) {
       const item = document.createElement("li");
       const card = document.createElement("a");
       card.className = "property-card";
-      card.href = `../property/?property=${encodeURIComponent(property.slug)}`;
+      card.href = `/property/${encodeURIComponent(property.slug)}`;
 
       const name = document.createElement("h2");
       name.textContent = property.name;
