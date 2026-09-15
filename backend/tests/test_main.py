@@ -5,9 +5,29 @@ from datetime import datetime, timedelta, timezone
 
 import app.main as main_module  # The module holding get_connection, so we can swap it out
 import pytest
-from app.database import SCHEMA  # CREATE TABLE statements, so test DBs match production
+from app.database import (  # CREATE TABLE statements, so test DBs match production
+    PRIMARY_PROPERTY_ID,
+    SCHEMA,
+    migrate_members_for_auth,
+)
 from app.main import app  # The actual FastAPI app we're testing
 from fastapi.testclient import TestClient  # Lets us send fake HTTP requests to that app
+
+
+def seed_primary_property(conn):
+    """Give a test database the property that stands default to.
+
+    /api/map-state refuses an unknown slug, so any test reading it needs the
+    property row to exist even when the test is not about properties.
+    """
+    conn.execute(
+        """
+        INSERT OR IGNORE INTO properties (
+            id, slug, name, center_lat, center_lng, default_zoom
+        ) VALUES (?, ?, ?, ?, ?, ?)
+        """,
+        (PRIMARY_PROPERTY_ID, PRIMARY_PROPERTY_ID, "Black Creek", 35.0, -78.0, 15),
+    )
 
 
 # Retired stand should be rejected with 409
@@ -419,6 +439,7 @@ def test_map_state_reflects_active_checkin(monkeypatch):
     conn = sqlite3.connect(":memory:", check_same_thread=False)
     conn.row_factory = sqlite3.Row
     conn.executescript(SCHEMA)
+    seed_primary_property(conn)
 
     # seed two open stands
     for stand_id in ["test-stand-1", "test-stand-2"]:
@@ -793,6 +814,7 @@ def test_map_state_marks_long_hunt_overdue(monkeypatch):
     conn = sqlite3.connect(":memory:", check_same_thread=False)
     conn.row_factory = sqlite3.Row
     conn.executescript(SCHEMA)
+    seed_primary_property(conn)
     conn.execute(
         "INSERT INTO stands (id, name, type, lat, lng) VALUES (?, ?, ?, ?, ?)",
         ("stand-1", "Long Sit", "box", 35.0, -78.0),
@@ -823,6 +845,7 @@ def test_map_state_hides_stale_hunt(monkeypatch):
     conn = sqlite3.connect(":memory:", check_same_thread=False)
     conn.row_factory = sqlite3.Row
     conn.executescript(SCHEMA)
+    seed_primary_property(conn)
     conn.execute(
         "INSERT INTO stands (id, name, type, lat, lng) VALUES (?, ?, ?, ?, ?)",
         ("stand-1", "Old Sit", "ground", 35.0, -78.0),
@@ -852,6 +875,7 @@ def test_map_state_returns_safe_host_and_guest_details(monkeypatch):
     conn = sqlite3.connect(":memory:", check_same_thread=False)
     conn.row_factory = sqlite3.Row
     conn.executescript(SCHEMA)
+    seed_primary_property(conn)
     conn.execute(
         """
         INSERT INTO members (
@@ -922,6 +946,7 @@ def test_map_state_returns_capacity_and_both_occupants(monkeypatch):
     conn = sqlite3.connect(":memory:", check_same_thread=False)
     conn.row_factory = sqlite3.Row
     conn.executescript(SCHEMA)
+    seed_primary_property(conn)
     conn.execute(
         """
         INSERT INTO members (
@@ -979,3 +1004,300 @@ def test_map_state_returns_capacity_and_both_occupants(monkeypatch):
     assert stand["occupants"][1]["occupant_type"] == "guest"
     assert stand["occupants"][1]["guest_of"] == "Mike D."
     assert "guest_phone" not in stand["occupants"][1]
+
+
+# An unknown property must be refused, not silently served as the primary one.
+def test_map_state_rejects_unknown_property(monkeypatch):
+    conn = sqlite3.connect(":memory:", check_same_thread=False)
+    conn.row_factory = sqlite3.Row
+    conn.executescript(SCHEMA)
+    seed_primary_property(conn)
+    conn.execute(
+        "INSERT INTO stands (id, name, type, lat, lng) VALUES (?, ?, ?, ?, ?)",
+        ("stand-1", "Creek Stand", "ladder", 35.0, -78.0),
+    )
+    conn.commit()
+    monkeypatch.setattr(main_module, "get_connection", lambda: conn)
+
+    response = TestClient(app).get("/api/map-state?property=no-such-property")
+
+    assert response.status_code == 404
+    assert response.json()["detail"]["code"] == "property_not_found"
+    # No stand coordinates may leak through the refusal.
+    assert "stands" not in response.json()
+
+
+# An inactive property is refused the same way an unknown slug is.
+def test_map_state_rejects_inactive_property(monkeypatch):
+    conn = sqlite3.connect(":memory:", check_same_thread=False)
+    conn.row_factory = sqlite3.Row
+    conn.executescript(SCHEMA)
+    conn.execute(
+        """
+        INSERT INTO properties (
+            id, slug, name, center_lat, center_lng, default_zoom, is_active
+        ) VALUES (?, ?, ?, ?, ?, ?, 0)
+        """,
+        ("retired-tract", "retired-tract", "Retired Tract", 35.0, -78.0, 15),
+    )
+    conn.commit()
+    monkeypatch.setattr(main_module, "get_connection", lambda: conn)
+
+    response = TestClient(app).get("/api/map-state?property=retired-tract")
+
+    assert response.status_code == 404
+
+
+# Google members have no password, so the column must accept NULL.
+def test_members_table_accepts_google_only_member():
+    conn = sqlite3.connect(":memory:", check_same_thread=False)
+    conn.row_factory = sqlite3.Row
+    conn.executescript(SCHEMA)
+
+    conn.execute(
+        """
+        INSERT INTO members (
+            id, email, google_sub, first_name, last_name, created_at
+        ) VALUES (?, ?, ?, ?, ?, ?)
+        """,
+        (
+            "member-google",
+            "gale@example.com",
+            "108xyz",
+            "Gale",
+            "Ray",
+            "2026-09-15T00:00:00+00:00",
+        ),
+    )
+    conn.commit()
+
+    row = conn.execute(
+        "SELECT password_hash, google_sub, last_login_at FROM members"
+    ).fetchone()
+    assert row["password_hash"] is None
+    assert row["google_sub"] == "108xyz"
+    assert row["last_login_at"] is None
+
+
+# Two members must never share one Google identity.
+def test_members_table_rejects_duplicate_google_sub():
+    conn = sqlite3.connect(":memory:", check_same_thread=False)
+    conn.row_factory = sqlite3.Row
+    conn.executescript(SCHEMA)
+    for member_id, email in (("m1", "one@example.com"), ("m2", "two@example.com")):
+        try:
+            conn.execute(
+                """
+                INSERT INTO members (
+                    id, email, google_sub, first_name, last_name, created_at
+                ) VALUES (?, ?, ?, ?, ?, ?)
+                """,
+                (member_id, email, "shared-sub", "A", "B", "2026-09-15T00:00:00+00:00"),
+            )
+        except sqlite3.IntegrityError:
+            assert member_id == "m2"
+            return
+    raise AssertionError("duplicate google_sub was accepted")
+
+
+# Password-only members all leave google_sub NULL; that must not collide.
+def test_members_table_allows_many_null_google_subs():
+    conn = sqlite3.connect(":memory:", check_same_thread=False)
+    conn.row_factory = sqlite3.Row
+    conn.executescript(SCHEMA)
+    conn.executemany(
+        """
+        INSERT INTO members (
+            id, email, password_hash, first_name, last_name, created_at
+        ) VALUES (?, ?, ?, ?, ?, ?)
+        """,
+        [
+            ("m1", "one@example.com", "hash-1", "A", "B", "2026-09-15T00:00:00+00:00"),
+            ("m2", "two@example.com", "hash-2", "C", "D", "2026-09-15T00:00:00+00:00"),
+        ],
+    )
+    conn.commit()
+
+    assert conn.execute("SELECT COUNT(*) FROM members").fetchone()[0] == 2
+
+
+# The retired endpoints exposed every property's coordinates without auth.
+def test_removed_unscoped_endpoints_are_gone():
+    client = TestClient(app)
+    assert client.get("/api/stands").status_code == 404
+    assert client.get("/api/map-features").status_code == 404
+
+
+# The pre-auth members table, as databases created before this slice have it.
+LEGACY_MEMBERS_SCHEMA = """
+    CREATE TABLE members (
+        id TEXT PRIMARY KEY,
+        email TEXT UNIQUE NOT NULL,
+        password_hash TEXT NOT NULL,
+        is_admin INTEGER NOT NULL DEFAULT 0 CHECK (is_admin IN (0, 1)),
+        first_name TEXT NOT NULL,
+        last_name TEXT NOT NULL,
+        created_at TEXT NOT NULL
+    );
+"""
+
+
+def legacy_members_connection(tmp_path):
+    """A database whose members table predates Google sign-in."""
+    conn = sqlite3.connect(tmp_path / "legacy.db")
+    conn.row_factory = sqlite3.Row
+    conn.executescript(SCHEMA.replace("CREATE TABLE IF NOT EXISTS members", "CREATE TABLE IF NOT EXISTS members_unused"))
+    conn.executescript("DROP TABLE IF EXISTS members_unused;" + LEGACY_MEMBERS_SCHEMA)
+    seed_primary_property(conn)
+    conn.execute(
+        """
+        INSERT INTO members (
+            id, email, password_hash, is_admin, first_name, last_name, created_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?)
+        """,
+        (
+            "member-1",
+            "Mike@Example.com",
+            "argon2-hash",
+            1,
+            "Mike",
+            "Doe",
+            "2026-01-01T00:00:00+00:00",
+        ),
+    )
+    conn.execute(
+        "INSERT INTO stands (id, name, type, lat, lng) VALUES (?, ?, ?, ?, ?)",
+        ("stand-1", "Creek Stand", "ladder", 35.0, -78.0),
+    )
+    conn.execute(
+        "INSERT INTO hunts (stand_id, member_id, checked_in_at) VALUES (?, ?, ?)",
+        ("stand-1", "member-1", "2026-01-01T12:00:00+00:00"),
+    )
+    conn.commit()
+    return conn
+
+
+# Rebuilding members must not disturb the hunts that reference it.
+def test_migration_preserves_members_and_hunts(tmp_path):
+    conn = legacy_members_connection(tmp_path)
+    conn.execute("PRAGMA foreign_keys = ON")
+
+    migrate_members_for_auth(conn)
+
+    member = conn.execute("SELECT * FROM members").fetchone()
+    assert member["id"] == "member-1"
+    assert member["password_hash"] == "argon2-hash"
+    assert member["is_admin"] == 1
+    assert member["first_name"] == "Mike"
+    assert conn.execute("SELECT COUNT(*) FROM hunts").fetchone()[0] == 1
+    # The rebuild must not orphan the hunts pointing at the old table.
+    assert conn.execute("PRAGMA foreign_key_check(hunts)").fetchall() == []
+    # Enforcement is turned off for the rebuild and must be restored.
+    assert conn.execute("PRAGMA foreign_keys").fetchone()[0] == 1
+
+
+# Existing mixed-case emails are normalized so the allowlist match is reliable.
+def test_migration_lowercases_existing_emails(tmp_path):
+    conn = legacy_members_connection(tmp_path)
+
+    migrate_members_for_auth(conn)
+
+    assert conn.execute("SELECT email FROM members").fetchone()[0] == "mike@example.com"
+
+
+# After migrating, the column accepts the Google-only member it exists for.
+def test_migration_allows_google_member_afterwards(tmp_path):
+    conn = legacy_members_connection(tmp_path)
+
+    migrate_members_for_auth(conn)
+    conn.execute(
+        """
+        INSERT INTO members (
+            id, email, google_sub, first_name, last_name, created_at
+        ) VALUES (?, ?, ?, ?, ?, ?)
+        """,
+        ("m2", "gale@example.com", "108xyz", "Gale", "Ray", "2026-09-15T00:00:00+00:00"),
+    )
+    conn.commit()
+
+    assert conn.execute("SELECT COUNT(*) FROM members").fetchone()[0] == 2
+
+
+# get_connection runs this on every connection, so repeats must be free.
+def test_migration_is_idempotent(tmp_path):
+    conn = legacy_members_connection(tmp_path)
+
+    migrate_members_for_auth(conn)
+    migrate_members_for_auth(conn)
+    migrate_members_for_auth(conn)
+
+    assert conn.execute("SELECT COUNT(*) FROM members").fetchone()[0] == 1
+    assert conn.execute("SELECT COUNT(*) FROM hunts").fetchone()[0] == 1
+
+
+# A database already carrying the current shape is left untouched.
+def test_migration_skips_current_schema():
+    conn = sqlite3.connect(":memory:", check_same_thread=False)
+    conn.row_factory = sqlite3.Row
+    conn.executescript(SCHEMA)
+
+    migrate_members_for_auth(conn)
+
+    names = {
+        row["name"] for row in conn.execute("PRAGMA table_info(members)").fetchall()
+    }
+    assert "google_sub" in names
+    assert "members_migrated" not in {
+        row[0]
+        for row in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")
+    }
+
+
+# A table that already has google_sub but predates last_login_at gets the
+# column added in place. Rebuilding would risk the Google subject already
+# stored on the row, and returning early would leave auth writing to a
+# column that does not exist.
+def test_migration_adds_missing_last_login_without_losing_google_sub():
+    conn = sqlite3.connect(":memory:")
+    conn.row_factory = sqlite3.Row
+    conn.execute(
+        """
+        CREATE TABLE members (
+            id TEXT PRIMARY KEY,
+            email TEXT UNIQUE NOT NULL,
+            password_hash TEXT,
+            google_sub TEXT UNIQUE,
+            is_admin INTEGER NOT NULL DEFAULT 0,
+            first_name TEXT NOT NULL,
+            last_name TEXT NOT NULL,
+            created_at TEXT NOT NULL
+        )
+        """
+    )
+    conn.execute(
+        """
+        INSERT INTO members (
+            id, email, google_sub, first_name, last_name, created_at
+        ) VALUES (?, ?, ?, ?, ?, ?)
+        """,
+        (
+            "member-1",
+            "mike@example.com",
+            "google-sub-1",
+            "Mike",
+            "Doe",
+            "2026-01-01T00:00:00+00:00",
+        ),
+    )
+    conn.commit()
+
+    # Runs on every connection, so a second pass must be a no-op.
+    migrate_members_for_auth(conn)
+    migrate_members_for_auth(conn)
+
+    columns = {row["name"] for row in conn.execute("PRAGMA table_info(members)")}
+    member = conn.execute("SELECT google_sub, last_login_at FROM members").fetchone()
+
+    assert "last_login_at" in columns
+    assert member["google_sub"] == "google-sub-1"
+    assert member["last_login_at"] is None

@@ -48,11 +48,18 @@ SCHEMA = f"""
     CREATE TABLE IF NOT EXISTS members (
         id TEXT PRIMARY KEY,
         email TEXT UNIQUE NOT NULL,
-        password_hash TEXT NOT NULL,
+        -- Null for members who only sign in with Google. A member may hold
+        -- both a password and a Google identity.
+        password_hash TEXT,
+        -- Google's stable subject claim. Never match members on email alone
+        -- after first sign-in: a Google account's email can change, the
+        -- subject cannot.
+        google_sub TEXT UNIQUE,
         is_admin INTEGER NOT NULL DEFAULT 0 CHECK (is_admin IN (0, 1)),
         first_name TEXT NOT NULL,
         last_name TEXT NOT NULL,
-        created_at TEXT NOT NULL
+        created_at TEXT NOT NULL,
+        last_login_at TEXT
     );
 
     CREATE TABLE IF NOT EXISTS hunts (
@@ -72,8 +79,76 @@ SCHEMA = f"""
 """
 
 
+def migrate_members_for_auth(conn):
+    """Allow password-free Google members and record the Google subject.
+
+    SQLite cannot drop a NOT NULL constraint in place, so the table is rebuilt.
+    Postgres does this with ALTER TABLE ... DROP NOT NULL; the difference is
+    contained here so callers never see it.
+    """
+    columns = conn.execute("PRAGMA table_info(members)").fetchall()
+    if not columns:
+        return  # Fresh database: SCHEMA already has the current shape.
+
+    password_hash_required = any(
+        column["name"] == "password_hash" and column["notnull"] for column in columns
+    )
+    names = {column["name"] for column in columns}
+    if not password_hash_required and "google_sub" in names:
+        if "last_login_at" not in names:
+            conn.execute("ALTER TABLE members ADD COLUMN last_login_at TEXT")
+            conn.commit()
+        return
+
+    # hunts.member_id references members(id). Dropping the old table with
+    # foreign keys enforced would fail or take the hunt rows with it, and the
+    # pragma is ignored inside a transaction, so it is toggled around one.
+    conn.commit()
+    conn.execute("PRAGMA foreign_keys = OFF")
+    try:
+        conn.execute("BEGIN")
+        conn.execute(
+            """
+            CREATE TABLE members_migrated (
+                id TEXT PRIMARY KEY,
+                email TEXT UNIQUE NOT NULL,
+                password_hash TEXT,
+                google_sub TEXT UNIQUE,
+                is_admin INTEGER NOT NULL DEFAULT 0 CHECK (is_admin IN (0, 1)),
+                first_name TEXT NOT NULL,
+                last_name TEXT NOT NULL,
+                created_at TEXT NOT NULL,
+                last_login_at TEXT
+            )
+            """
+        )
+        # Emails are lowercased on the way in so the allowlist match is
+        # case-insensitive on both SQLite and Postgres without a collation.
+        conn.execute(
+            """
+            INSERT INTO members_migrated (
+                id, email, password_hash, is_admin,
+                first_name, last_name, created_at
+            )
+            SELECT id, LOWER(email), password_hash, is_admin,
+                   first_name, last_name, created_at
+            FROM members
+            """
+        )
+        conn.execute("DROP TABLE members")
+        conn.execute("ALTER TABLE members_migrated RENAME TO members")
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        conn.execute("PRAGMA foreign_keys = ON")
+
+
 def ensure_current_schema(conn):
     """Apply the small local migration needed by the current development schema."""
+    migrate_members_for_auth(conn)
+
     stand_columns = {
         row["name"] for row in conn.execute("PRAGMA table_info(stands)").fetchall()
     }

@@ -48,3 +48,5 @@ Black Creek Hunt is a members-only hunting-club application for viewing properti
 - Prioritize correctness, authorization, data exposure, transaction safety, portability, and regressions.
 - Do not pad reviews with generic advice, style preferences, or requests for unspecified tests.
 - State the final verdict and any behavior that could not be verified.
+- Always specify what file and line.
+- If I ask how to change something manually, specify the file and line as well.

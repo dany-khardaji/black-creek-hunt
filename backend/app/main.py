@@ -118,26 +118,6 @@ def get_live_count():
         conn.close()
 
 
-# Returns every non-retired stand in the database.
-@app.get("/api/stands")
-def list_stands():
-    conn = get_connection()
-    try:
-        return conn.execute("SELECT * FROM stands WHERE is_retired = 0").fetchall()
-    finally:
-        conn.close()
-
-
-# Returns every map feature (gates, parking, camp, etc.).
-@app.get("/api/map-features")
-def list_map_features():
-    conn = get_connection()
-    try:
-        return conn.execute("SELECT * FROM map_features").fetchall()
-    finally:
-        conn.close()
-
-
 # Handles a member checking into a stand.
 @app.post("/api/hunts")
 def check_in(request: CheckInRequest):
@@ -338,7 +318,18 @@ def get_map_state(property: str = PRIMARY_PROPERTY_ID):
         ).fetchone()
         # Databases seeded before properties existed have no rows in that table,
         # so fall back to the implicit primary property rather than 404ing.
-        property_id = property_row["id"] if property_row else PRIMARY_PROPERTY_ID
+        # An unknown slug is refused rather than quietly served as the primary
+        # property: falling back would hand back another property's stands and
+        # coordinates under the wrong name.
+        if property_row is None:
+            raise HTTPException(
+                status_code=404,
+                detail={
+                    "code": "property_not_found",
+                    "message": f"Property {property} was not found",
+                },
+            )
+        property_id = property_row["id"]
 
         stands = conn.execute(
             """
