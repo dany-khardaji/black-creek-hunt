@@ -8,21 +8,31 @@ from pwdlib.hashers.argon2 import Argon2Hasher
 
 _password_hash = PasswordHash((Argon2Hasher(),))
 
+# Checking a password is slow on purpose. An account with no password still gets
+# checked against this, so a sign-in attempt takes the same time either way and
+# the delay never gives away who has an account.
+_DUMMY_PASSWORD_HASH = _password_hash.hash(
+    "dummy-password-used-only-to-equalize-login-time"
+)
+
 
 def hash_password(password):
     return _password_hash.hash(password)
 
 
 def verify_password(password, stored_hash):
-    # A member with no password set, or a damaged stored value, is a failed
-    # sign-in rather than a server error.
-    if not stored_hash:
-        return False
+    candidate_hash = stored_hash or _DUMMY_PASSWORD_HASH
 
     try:
-        return _password_hash.verify(password, stored_hash)
+        matches = _password_hash.verify(password, candidate_hash)
     except Exception:
+        # A damaged stored value fails, but still pays the usual cost so it does
+        # not answer faster than a real one.
+        _password_hash.verify(password, _DUMMY_PASSWORD_HASH)
         return False
+
+    # Typing the dummy password must never sign anyone in.
+    return bool(stored_hash) and matches
 
 
 # Email is stored and compared in one form, so capital letters or stray spaces

@@ -1,9 +1,11 @@
 import sqlite3
 import threading
+import time
 from datetime import datetime, timedelta, timezone
 
 import app.main as main_module  # The module holding get_connection, so we can swap it out
 import pytest
+from app import auth, config
 from app.database import (  # CREATE TABLE statements, so test DBs match production
     SCHEMA,
     migrate_members_for_auth,
@@ -850,3 +852,215 @@ def test_migration_adds_missing_last_login_without_losing_google_sub():
     assert "last_login_at" in columns
     assert member["google_sub"] == "google-sub-1"
     assert member["last_login_at"] is None
+
+
+# --- Authentication routes ---
+
+
+# Signing in with the right password returns the member and sets a cookie
+def test_login_succeeds_with_correct_password(anonymous_client, conn):
+    seed_member(conn, "member-9", email="nine@example.com", password="swamp-oak-42")
+
+    response = anonymous_client.post(
+        "/api/auth/login",
+        json={"email": "nine@example.com", "password": "swamp-oak-42"},
+    )
+
+    assert response.status_code == 200
+    assert response.json()["id"] == "member-9"
+    assert anonymous_client.cookies.get(config.SESSION_COOKIE_NAME)
+
+
+# The cookie from signing in works on a guarded route
+def test_login_cookie_identifies_the_member(anonymous_client, conn):
+    seed_member(conn, "member-9", email="nine@example.com", password="swamp-oak-42")
+
+    anonymous_client.post(
+        "/api/auth/login",
+        json={"email": "nine@example.com", "password": "swamp-oak-42"},
+    )
+
+    assert anonymous_client.get("/api/auth/me").json()["id"] == "member-9"
+
+
+# Capital letters and stray spaces in the email must not stop a sign-in
+@pytest.mark.parametrize(
+    "typed", ["Nine@Example.com", "  NINE@EXAMPLE.COM  ", "nine@example.com "]
+)
+def test_login_accepts_any_casing_of_the_email(anonymous_client, conn, typed):
+    seed_member(conn, "member-9", email="nine@example.com", password="swamp-oak-42")
+
+    response = anonymous_client.post(
+        "/api/auth/login", json={"email": typed, "password": "swamp-oak-42"}
+    )
+
+    assert response.status_code == 200
+
+
+# A wrong password is refused
+def test_login_rejects_a_wrong_password(anonymous_client, conn):
+    seed_member(conn, "member-9", email="nine@example.com", password="swamp-oak-42")
+
+    response = anonymous_client.post(
+        "/api/auth/login",
+        json={"email": "nine@example.com", "password": "not-the-password"},
+    )
+
+    assert response.status_code == 401
+
+
+# An unknown email gives exactly the same answer as a wrong password, so nobody
+# can tell which addresses have accounts
+def test_login_hides_whether_the_email_exists(anonymous_client, conn):
+    seed_member(conn, "member-9", email="nine@example.com", password="swamp-oak-42")
+
+    wrong_password = anonymous_client.post(
+        "/api/auth/login",
+        json={"email": "nine@example.com", "password": "not-the-password"},
+    )
+    unknown_email = anonymous_client.post(
+        "/api/auth/login",
+        json={"email": "stranger@example.com", "password": "swamp-oak-42"},
+    )
+
+    assert wrong_password.status_code == unknown_email.status_code == 401
+    assert wrong_password.json() == unknown_email.json()
+
+
+# A member with no password set, such as a Google-only account, cannot sign in
+# with one
+def test_login_rejects_a_member_without_a_password(anonymous_client, conn):
+    seed_member(conn, "member-9", email="nine@example.com", password_hash=None)
+
+    response = anonymous_client.post(
+        "/api/auth/login",
+        json={"email": "nine@example.com", "password": "anything"},
+    )
+
+    assert response.status_code == 401
+
+
+# A failed sign-in must not leave a cookie behind
+def test_failed_login_sets_no_cookie(anonymous_client, conn):
+    seed_member(conn, "member-9", email="nine@example.com", password="swamp-oak-42")
+
+    anonymous_client.post(
+        "/api/auth/login",
+        json={"email": "nine@example.com", "password": "not-the-password"},
+    )
+
+    assert anonymous_client.cookies.get(config.SESSION_COOKIE_NAME) is None
+
+
+# Signing in records when it happened
+def test_login_records_the_time(anonymous_client, conn):
+    seed_member(conn, "member-9", email="nine@example.com", password="swamp-oak-42")
+
+    anonymous_client.post(
+        "/api/auth/login",
+        json={"email": "nine@example.com", "password": "swamp-oak-42"},
+    )
+
+    row = conn.execute(
+        "SELECT last_login_at FROM members WHERE id = ?", ("member-9",)
+    ).fetchone()
+    assert row["last_login_at"] is not None
+
+
+# A refused sign-in leaves the last sign-in time alone
+def test_failed_login_records_nothing(anonymous_client, conn):
+    seed_member(conn, "member-9", email="nine@example.com", password="swamp-oak-42")
+
+    anonymous_client.post(
+        "/api/auth/login",
+        json={"email": "nine@example.com", "password": "not-the-password"},
+    )
+
+    row = conn.execute(
+        "SELECT last_login_at FROM members WHERE id = ?", ("member-9",)
+    ).fetchone()
+    assert row["last_login_at"] is None
+
+
+# The sign-in reply never carries an email or a password hash
+def test_login_reply_carries_no_private_details(anonymous_client, conn):
+    seed_member(conn, "member-9", email="nine@example.com", password="swamp-oak-42")
+
+    response = anonymous_client.post(
+        "/api/auth/login",
+        json={"email": "nine@example.com", "password": "swamp-oak-42"},
+    )
+
+    assert set(response.json()) == {"id", "first_name", "last_name", "is_admin"}
+    assert "nine@example.com" not in response.text
+
+
+# Asking who you are without signing in is refused
+def test_me_requires_signing_in(anonymous_client):
+    assert anonymous_client.get("/api/auth/me").status_code == 401
+
+
+# Signing out clears the cookie
+def test_logout_clears_the_cookie(anonymous_client, conn):
+    seed_member(conn, "member-9", email="nine@example.com", password="swamp-oak-42")
+    anonymous_client.post(
+        "/api/auth/login",
+        json={"email": "nine@example.com", "password": "swamp-oak-42"},
+    )
+
+    response = anonymous_client.post("/api/auth/logout")
+
+    assert response.status_code == 200
+    assert not anonymous_client.cookies.get(config.SESSION_COOKIE_NAME)
+
+
+# Signing out works even with a broken cookie, or nobody could ever clear one
+def test_logout_works_without_a_valid_session(anonymous_client):
+    anonymous_client.cookies.set(config.SESSION_COOKIE_NAME, "not-a-real-token")
+
+    assert anonymous_client.post("/api/auth/logout").status_code == 200
+
+
+# Every sign-in attempt must do the same password-checking work, whatever the
+# email was. Counting the checks rather than timing them keeps this test from
+# failing on a busy machine.
+@pytest.mark.parametrize(
+    "email", ["nine@example.com", "stranger@example.com", "google@example.com"]
+)
+def test_every_login_attempt_checks_a_password(anonymous_client, conn, monkeypatch, email):
+    seed_member(conn, "member-9", email="nine@example.com", password="swamp-oak-42")
+    seed_member(conn, "member-8", email="google@example.com", password_hash=None)
+
+    checks = []
+    real_verify = auth._password_hash.verify
+    monkeypatch.setattr(
+        auth._password_hash,
+        "verify",
+        lambda *args, **kwargs: (checks.append(1), real_verify(*args, **kwargs))[1],
+    )
+
+    anonymous_client.post(
+        "/api/auth/login", json={"email": email, "password": "wrong-password"}
+    )
+
+    assert len(checks) == 1
+
+
+# A damaged stored hash must not answer quicker than a real one either
+def test_a_broken_stored_hash_still_checks_a_password(anonymous_client, conn, monkeypatch):
+    seed_member(conn, "member-9", email="nine@example.com", password_hash="not-a-hash")
+
+    checks = []
+    real_verify = auth._password_hash.verify
+    monkeypatch.setattr(
+        auth._password_hash,
+        "verify",
+        lambda *args, **kwargs: (checks.append(1), real_verify(*args, **kwargs))[1],
+    )
+
+    response = anonymous_client.post(
+        "/api/auth/login", json={"email": "nine@example.com", "password": "anything"}
+    )
+
+    assert response.status_code == 401
+    assert len(checks) >= 1

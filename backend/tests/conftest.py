@@ -1,15 +1,12 @@
-"""Shared fixtures and seed helpers for the backend suite.
-
-Pytest loads this automatically, so tests use the fixtures by naming them as
-arguments. Keeping database setup here means a change to how a test database
-is built happens once rather than in every test.
-"""
+# Shared test setup. Pytest loads this file on its own, so a test uses anything
+# here just by naming it as an argument.
 
 import sqlite3
 from datetime import datetime, timezone
 
 import app.main as main_module
 import pytest
+from app import auth
 from app.database import PRIMARY_PROPERTY_ID, SCHEMA
 from app.main import app
 from fastapi.testclient import TestClient
@@ -30,6 +27,8 @@ def seed_primary_property(conn):
     conn.commit()
 
 
+# Pass password= only when a test actually signs in. Hashing is slow by design,
+# and almost every test seeds a member without needing a real one.
 def seed_member(
     conn,
     member_id=DEFAULT_MEMBER_ID,
@@ -38,8 +37,11 @@ def seed_member(
     last_name="Doe",
     is_admin=0,
     password_hash="not-a-real-hash",
+    password=None,
 ):
-    """Insert a member. hunts.member_id references this table."""
+    if password is not None:
+        password_hash = auth.hash_password(password)
+
     conn.execute(
         """
         INSERT OR IGNORE INTO members (
@@ -157,6 +159,21 @@ def client(conn, monkeypatch):
     # The acting member is added first because checking in records who did it,
     # and that has to point at a real person.
     seed_member(conn, main_module.CURRENT_MEMBER_ID)
+    db_path = conn.execute("PRAGMA database_list").fetchone()["file"]
+
+    monkeypatch.setattr(
+        main_module,
+        "get_connection",
+        lambda: open_connection(db_path),
+    )
+
+    return TestClient(app)
+
+
+# A caller who is not signed in. Still points at the test database, so a mistake
+# in the guards shows up as a failing test rather than a read of the real one.
+@pytest.fixture
+def anonymous_client(conn, monkeypatch):
     db_path = conn.execute("PRAGMA database_list").fetchone()["file"]
 
     monkeypatch.setattr(

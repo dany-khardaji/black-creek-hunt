@@ -2,17 +2,26 @@ from collections import Counter
 from datetime import datetime, timezone
 from pathlib import Path
 
+from app import auth, config
 from app.database import PRIMARY_PROPERTY_ID, get_connection
-from app.models import CheckInRequest
+from app.models import CheckInRequest, LoginRequest
 from app.sessions import active_hunt_count, is_hunt_overdue, session_boundary
-from fastapi import FastAPI, HTTPException
-from fastapi.responses import FileResponse
+from fastapi import Depends, FastAPI, HTTPException, Request, Response
+from fastapi.responses import FileResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 
 app = FastAPI()
 
 # Authentication replaces this development identity in Slice 3.
 CURRENT_MEMBER_ID = "member-1"
+
+
+# Sends someone who is not signed in to the login page. 303 tells the browser to
+# ask for that page normally, whatever kind of request it was making.
+@app.exception_handler(auth.RedirectToLogin)
+def redirect_to_login(request: Request, exc: auth.RedirectToLogin):
+    return RedirectResponse(config.LOGIN_PATH, status_code=303)
+
 
 def error_detail(code, message, stand=None):
     detail = {"code": code, "message": message}
@@ -51,6 +60,73 @@ def initials(name):
 
 def utc_now():
     return datetime.now(timezone.utc)
+
+
+# --- Authentication ---------------------------------------------------------
+
+
+@app.post("/api/auth/login")
+def login(payload: LoginRequest, response: Response):
+    conn = get_connection()
+    now = utc_now()
+
+    # The password is checked before any write starts. Checking one takes about
+    # 25ms, and holding the database open for that would stall check-ins and
+    # checkouts happening at the same time.
+    try:
+        member = auth.find_member_by_email(conn, payload.email)
+        stored_hash = member["password_hash"] if member is not None else None
+        password_valid = auth.verify_password(payload.password, stored_hash)
+
+        # An unknown email and a wrong password give the same answer on purpose,
+        # so nobody can work out who has an account here.
+        if member is None or not password_valid:
+            raise HTTPException(
+                status_code=401,
+                detail={
+                    "code": "invalid_credentials",
+                    "message": "Those sign-in details were not recognized.",
+                },
+            )
+
+        cursor = conn.execute(
+            "UPDATE members SET last_login_at = ? WHERE id = ?",
+            (now.isoformat(), member["id"]),
+        )
+
+        # Nothing updated means the member was removed since the lookup a moment
+        # ago, so no session is handed out.
+        if cursor.rowcount != 1:
+            raise HTTPException(
+                status_code=401,
+                detail={
+                    "code": "invalid_credentials",
+                    "message": "Those sign-in details were not recognized.",
+                },
+            )
+
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        conn.close()
+
+    auth.set_session_cookie(response, auth.create_session_token(member["id"], now=now))
+    return auth.public_member(member)
+
+
+@app.get("/api/auth/me")
+def read_current_member(member=Depends(auth.require_api_member)):
+    return auth.public_member(member)
+
+
+# Not guarded on purpose: someone holding a broken or expired cookie still has
+# to be able to clear it.
+@app.post("/api/auth/logout")
+def logout(response: Response):
+    auth.clear_session_cookie(response)
+    return {"signed_out": True}
 
 
 # Lists the properties shown on the homepage.
