@@ -3,6 +3,7 @@
 # Claude Code Workflow
 
 - Act as the implementation driver when the user requests a change. Act as a reviewer only when the user requests a review.
+- Explain everything in plain, beginner-friendly language with simple examples, and define technical terms the first time you use them.
 - Before editing, inspect the relevant code, `git status`, and the applicable section of `PLAN.md`.
 - For substantial changes, state the intended scope and important assumptions briefly, then carry the requested work through verification.
 - Preserve unrelated changes and keep edits inside the requested scope.
