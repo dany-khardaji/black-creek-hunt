@@ -11,3 +11,4 @@
 - Add or update focused tests for behavior that can regress; reuse shared fixtures instead of repeating database setup.
 - Do not commit, push, deploy, install production dependencies, or change external services unless the user asks.
 - After implementation, summarize the result, list the checks run, and identify anything that remains unverified.
+- Only comment non-obvious logic. Use one plain-English line a beginner could understand. No jargon, no restating the code.

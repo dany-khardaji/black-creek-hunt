@@ -17,12 +17,8 @@ from fastapi.testclient import TestClient
 DEFAULT_MEMBER_ID = "member-1"
 
 
+# Any test that reads the map needs this property row to exist.
 def seed_primary_property(conn):
-    """Give a test database the property that stands default to.
-
-    /api/map-state refuses an unknown slug, so any test reading it needs the
-    property row to exist even when the test is not about properties.
-    """
     conn.execute(
         """
         INSERT OR IGNORE INTO properties (
@@ -107,11 +103,7 @@ def seed_hunt(
     guest_name=None,
     guest_phone=None,
 ):
-    """Insert one hunt row and return its id.
-
-    Seeds the member first: foreign keys are enforced in these tests, so a
-    hunt cannot reference a member that does not exist.
-    """
+    # The member is added first, because a hunt has to belong to someone real.
     seed_member(conn, member_id)
     cursor = conn.execute(
         """
@@ -134,13 +126,9 @@ def seed_hunt(
     return cursor.lastrowid
 
 
+# Matches the real app's settings, so a test cannot pass on data the live site
+# would reject.
 def open_connection(target):
-    """Open a test connection with the production SQLite settings.
-
-    Foreign keys are enforced because get_connection enforces them in the real
-    application: without this, a test can insert a hunt referencing a member
-    that does not exist and pass where production would fail.
-    """
     connection = sqlite3.connect(target, check_same_thread=False)
     connection.row_factory = sqlite3.Row
     connection.execute("PRAGMA foreign_keys = ON")
@@ -155,14 +143,10 @@ def build_connection(target):
     return connection
 
 
+# A fresh database per test. Kept in a file rather than memory so the test and
+# the app can both reach it without one closing the other's connection.
 @pytest.fixture
 def conn(tmp_path):
-    """A fresh file-backed database for one test.
-
-    Backed by a file, not memory, so the test and the application can hold
-    separate connections to the same data: routes close the connection they
-    were handed, which would otherwise close the test's own.
-    """
     connection = build_connection(tmp_path / "test.db")
     yield connection
     connection.close()
@@ -170,12 +154,8 @@ def conn(tmp_path):
 
 @pytest.fixture
 def client(conn, monkeypatch):
-    """A TestClient whose requests each open their own connection.
-
-    The acting member is seeded because foreign keys are enforced: check-in
-    writes hunts.member_id, which must reference a real row. Slice 4 replaces
-    this with an authenticated session for the same member.
-    """
+    # The acting member is added first because checking in records who did it,
+    # and that has to point at a real person.
     seed_member(conn, main_module.CURRENT_MEMBER_ID)
     db_path = conn.execute("PRAGMA database_list").fetchone()["file"]
 
@@ -190,17 +170,8 @@ def client(conn, monkeypatch):
 
 @pytest.fixture
 def file_db(tmp_path, monkeypatch):
-    """A database addressed by path, with no open connection held by the test.
-
-    Differs from `conn` in what it hands back: a path rather than a live
-    connection. Tests that assert on state after a request use this, opening
-    their own connection at each point so nothing observes stale data across
-    SQLite's write lock: transaction rollback, and two requests racing for
-    one seat.
-
-    Yields the path; seed with `build_connection(path)`, and read the final
-    state with `inspect_file_db(path)`.
-    """
+    # Hands back a file path instead of an open connection, for tests that check
+    # what was saved after a request and must not read stale data.
     db_path = tmp_path / "test.db"
     setup = build_connection(db_path)
     setup.close()
@@ -220,12 +191,10 @@ def inspect_file_db(db_path):
     return open_connection(db_path)
 
 
+# Holds the clock still so tests about the 3am reset and overdue hunts always
+# get the same answer.
 @pytest.fixture
 def frozen_now(monkeypatch):
-    """Pin the clock so session-boundary and overdue behavior is deterministic.
-
-    Returns the instant the application will see as "now".
-    """
     now = datetime(2026, 11, 10, 17, 0, tzinfo=timezone.utc)
     monkeypatch.setattr(main_module, "utc_now", lambda: now)
     return now

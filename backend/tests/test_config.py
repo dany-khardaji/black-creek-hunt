@@ -4,9 +4,8 @@ import pytest
 from app import config as config_module
 
 
-# config.py reads os.environ at import, so every test here has to re-import the
-# module to see a changed variable. monkeypatch restores the environment, and
-# the final reload puts the module back the way the rest of the suite found it.
+# Settings are read once when the module loads, so it has to be loaded again
+# for a test to see a changed setting.
 def reload_config(monkeypatch, **env):
     for name in (
         "JWT_SECRET",

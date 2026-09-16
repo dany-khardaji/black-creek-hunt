@@ -94,13 +94,9 @@ def test_expired_token_is_rejected():
     assert auth.decode_session_token(token) is None
 
 
+# A complete, working token payload, so each test below can break exactly one
+# thing and know that is why it failed.
 def valid_payload(**overrides):
-    """A payload that decodes cleanly, so a test can break exactly one thing.
-
-    Every claim decode_session_token requires is present. Without this, a
-    forgery test that also happened to omit a required claim would keep passing
-    if the condition it names stopped being checked.
-    """
     now = int(datetime.now(timezone.utc).timestamp())
     payload = {"sub": "member-1", "iat": now, "exp": now + 60}
     payload.update(overrides)
@@ -128,9 +124,7 @@ def test_token_signed_with_another_secret_is_rejected():
     assert auth.decode_session_token(forged) is None
 
 
-# An unsigned "alg: none" token is rejected. Passing algorithms explicitly is
-# the guard against this; PyJWT 2.x also refuses alg "none" whenever a key is
-# supplied, so the forgery is turned away twice.
+# A token that claims to need no signature at all is rejected
 def test_unsigned_token_is_rejected():
     forged = jwt.encode(valid_payload(), None, algorithm="none")
 
@@ -153,9 +147,8 @@ def test_token_without_subject_is_rejected():
     assert auth.decode_session_token(token) is None
 
 
-# exp is only enforced when the claim is present, so a correctly signed token
-# that simply omits it would otherwise authenticate forever. Each case drops
-# exactly one claim from an otherwise valid payload.
+# A token missing any required part is rejected. Without this, one with no
+# expiry date would work forever.
 @pytest.mark.parametrize("missing", ["sub", "iat", "exp"])
 def test_token_missing_a_required_claim_is_rejected(missing):
     payload = valid_payload()
@@ -222,9 +215,8 @@ def test_public_member_exposes_is_admin_as_bool(conn, stored, expected):
     assert auth.public_member(row)["is_admin"] is expected
 
 
-# The guards are wired into routes with Depends, which reads their signature.
-# Without the Request annotation FastAPI takes "request" for a query parameter
-# and every guarded route answers 422 instead of reading the session cookie.
+# A throwaway app for testing the guards the way real routes use them, which
+# catches wiring mistakes that calling them directly would not.
 def guarded_probe_app(dependency):
     probe = FastAPI()
 

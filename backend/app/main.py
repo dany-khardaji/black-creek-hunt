@@ -30,7 +30,7 @@ def missing_stand_detail(stand_id):
     }
 
 
-# Will probably be edited later
+# Shows a guest's full name, or a member as "Mike D." to keep it short.
 def display_name(active_hunt):
     if active_hunt["guest_name"]:
         return active_hunt["guest_name"]
@@ -97,8 +97,7 @@ def get_property(slug: str):
         conn.close()
 
 
-# Club-wide active hunter total, across every property. Powers the homepage
-# counter; the property page uses the per-property count in map-state instead.
+# How many people are out across the whole club, for the homepage counter.
 @app.get("/api/live-count")
 def get_live_count():
     conn = get_connection()
@@ -316,11 +315,8 @@ def get_map_state(property: str = PRIMARY_PROPERTY_ID):
             "SELECT id FROM properties WHERE slug = ? AND is_active = 1",
             (property,),
         ).fetchone()
-        # Databases seeded before properties existed have no rows in that table,
-        # so fall back to the implicit primary property rather than 404ing.
-        # An unknown slug is refused rather than quietly served as the primary
-        # property: falling back would hand back another property's stands and
-        # coordinates under the wrong name.
+        # An unknown property name is refused rather than quietly showing the
+        # main one, which would put the wrong stands and locations on the map.
         if property_row is None:
             raise HTTPException(
                 status_code=404,
@@ -465,12 +461,9 @@ def get_map_state(property: str = PRIMARY_PROPERTY_ID):
 
 
 # --- Static pages -----------------------------------------------------------
-# The frontend is served from this same app so the browser has one origin for
-# both pages and API. That removes the need for CORS, and gives OAuth a stable
-# redirect target in Slice 4.
-#
-# These are declared after every /api route: the StaticFiles mount at the end
-# is a catch-all and would otherwise shadow them.
+# Pages are served by this same app so the site and its API share one address.
+# They must stay below the /api routes, because the catch-all at the bottom of
+# this file would otherwise swallow them.
 
 FRONTEND = Path(__file__).parent.parent.parent / "frontend"
 
@@ -491,8 +484,6 @@ def property_page(slug: str):
     return FileResponse(FRONTEND / "property" / "index.html")
 
 
-# Stylesheets, scripts, and images live under /static/ rather than at the root.
-# A root mount is not enough on its own: /property/{slug} is a wildcard that
-# would also match /property/property.css and hand back the HTML page instead,
-# which the browser then refuses to apply as a stylesheet.
+# Files live under /static/ so that /property/anything does not accidentally
+# match a stylesheet and return the page instead.
 app.mount("/static", StaticFiles(directory=FRONTEND), name="static")

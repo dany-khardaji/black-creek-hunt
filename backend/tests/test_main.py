@@ -804,10 +804,8 @@ def test_migration_skips_current_schema():
     }
 
 
-# A table that already has google_sub but predates last_login_at gets the
-# column added in place. Rebuilding would risk the Google subject already
-# stored on the row, and returning early would leave auth writing to a
-# column that does not exist.
+# An older members table gains the missing last-login column without being
+# rebuilt, which would put the stored Google details at risk.
 def test_migration_adds_missing_last_login_without_losing_google_sub():
     conn = sqlite3.connect(":memory:")
     conn.row_factory = sqlite3.Row

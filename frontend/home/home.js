@@ -1,5 +1,4 @@
-// Homepage: lists the club's properties and the club-wide live hunter count.
-// The property map lives in property.js; nothing here touches Leaflet.
+// Homepage: the club's properties and how many people are out right now.
 
 const propertyList = document.getElementById("property-list");
 const homeMessage = document.getElementById("home-message");
@@ -25,8 +24,8 @@ function renderProperties(properties) {
     return;
   }
 
-  // Build each card as a DOM node rather than an HTML string, so property
-  // names and descriptions can never be parsed as markup.
+  // Built piece by piece rather than as text, so a property name can never be
+  // treated as page code.
   propertyList.replaceChildren(
     ...properties.map((property) => {
       const item = document.createElement("li");

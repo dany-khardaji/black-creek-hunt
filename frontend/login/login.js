@@ -1,6 +1,5 @@
-// Sign-in page. The Google button is a plain link handled entirely by the
-// server, so only the email/password form needs JavaScript.
-// The endpoint it posts to is added in Slice 4.
+// Sign-in page. Only the email and password form needs code here; the Google
+// button is an ordinary link the server handles.
 
 const passwordForm = document.getElementById("password-form");
 const loginMessage = document.getElementById("login-message");

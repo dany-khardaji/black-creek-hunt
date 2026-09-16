@@ -14,12 +14,8 @@ def hash_password(password):
 
 
 def verify_password(password, stored_hash):
-    """Check a password against a stored hash, never raising.
-
-    password_hash is null for members who only sign in with Google, and test
-    fixtures seed a placeholder string. Both must read as a failed sign-in
-    rather than a 500 that exposes a stack trace.
-    """
+    # A member with no password set, or a damaged stored value, is a failed
+    # sign-in rather than a server error.
     if not stored_hash:
         return False
 
@@ -29,23 +25,15 @@ def verify_password(password, stored_hash):
         return False
 
 
+# Email is stored and compared in one form, so capital letters or stray spaces
+# in what a member types never stop them signing in.
 def normalize_email(email):
-    """The single place email casing and padding are decided.
-
-    Applied on insert and on lookup, so a member who types Mike@Example.com
-    signs in. Keeping this in Python rather than SQL means SQLite and Postgres
-    agree without relying on either one's collation.
-    """
     return (email or "").strip().lower()
 
 
 def create_session_token(member_id, now=None):
-    """Sign a session token for a member.
-
-    The payload is deliberately only sub/exp/iat. An is_admin claim would stay
-    stale for the life of the token, so authorization reads is_admin from the
-    member row on each request instead.
-    """
+    # The token says who you are, not what you may do. Admin rights are read
+    # from the member's row each time, so removing them takes effect at once.
     issued_at = now or datetime.now(timezone.utc)
     expires_at = issued_at + timedelta(minutes=config.JWT_EXPIRE_MINUTES)
 
@@ -59,15 +47,8 @@ def create_session_token(member_id, now=None):
 
 
 def decode_session_token(token):
-    """Return the member id in a valid token, or None.
-
-    algorithms is passed explicitly: without it a token claiming "alg": "none"
-    would be accepted unsigned. The claims are required rather than merely
-    checked when present: exp is only enforced if it exists, so a signed token
-    carrying just a subject would otherwise never expire. Every failure -
-    expired, tampered, malformed, incomplete, wrong signature - is the same
-    None, because the caller treats them all as "not signed in".
-    """
+    # Anything wrong with the token - expired, edited, incomplete, or signed
+    # by someone else - is treated the same as not being signed in.
     if not token:
         return None
 
@@ -76,6 +57,8 @@ def decode_session_token(token):
             token,
             config.JWT_SECRET,
             algorithms=[config.JWT_ALGORITHM],
+            # Listing what must be present: a missing expiry is only checked
+            # if it is there, so without this a token could last forever.
             options={"require": ["sub", "iat", "exp"]},
         )
     except jwt.PyJWTError:
@@ -86,12 +69,8 @@ def decode_session_token(token):
 
 
 def set_session_cookie(response, token):
-    """Attach the session cookie.
-
-    SameSite=Lax rather than Strict: the Google sign-in commit returns the
-    browser from Google's domain by redirect, and Strict withholds the cookie
-    on that landing, which reads as a failed sign-in and loops.
-    """
+    # "lax" not "strict": signing in with Google sends the browser back from
+    # Google's site, and "strict" would hold the cookie back on that trip.
     response.set_cookie(
         config.SESSION_COOKIE_NAME,
         token,
@@ -104,12 +83,8 @@ def set_session_cookie(response, token):
 
 
 def clear_session_cookie(response):
-    """Remove the session cookie.
-
-    The attributes must mirror set_session_cookie exactly. A delete that
-    differs on path, samesite, or secure leaves the original cookie in place
-    in some browsers, so signing out would appear to do nothing.
-    """
+    # These settings must match set_session_cookie above, or some browsers
+    # keep the old cookie and signing out does nothing.
     response.delete_cookie(
         config.SESSION_COOKIE_NAME,
         httponly=True,
@@ -133,14 +108,9 @@ def find_member_by_email(conn, email):
     ).fetchone()
 
 
+# Every response that includes a member goes through here. Emails, phone
+# numbers, password hashes, and Google IDs are left out on purpose.
 def public_member(row):
-    """The only shape a member is allowed to leave the process in.
-
-    PLAN.md excludes phone numbers, emails, password hashes, and Google subject
-    IDs from every response, so none of them appear here. Every response that
-    carries member details goes through this function so that rule lives in one
-    place rather than being re-decided per route.
-    """
     return {
         "id": row["id"],
         "first_name": row["first_name"],
@@ -149,29 +119,23 @@ def public_member(row):
     }
 
 
+# Signals that a page needs signing in. main.py turns this into a redirect.
 class RedirectToLogin(Exception):
-    """Raised by require_page_member. main.py turns this into a 303."""
+    pass
 
 
 def _resolve_member(request: Request):
-    """Look up the member for a request's session cookie, or None.
-
-    The token is not trusted on its own: a member deleted or revoked since
-    sign-in must stop being authenticated before the token expires, so the row
-    is read on every request.
-
-    The import is deliberately inside the function. conftest.py redirects the
-    test database by patching main.get_connection, and a module-level import
-    here would bind the real one - authenticated tests would then read the
-    production database while routes read the temp file. Slice 6 replaces this
-    with a proper connection dependency on the routes.
-    """
+    # Imported here, not at the top of the file: the tests swap the database by
+    # replacing main.get_connection, and a top-level import would miss that and
+    # read the real one instead. Slice 6 replaces this with a proper dependency.
     from app import main
 
     member_id = decode_session_token(request.cookies.get(config.SESSION_COOKIE_NAME))
     if member_id is None:
         return None
 
+    # The member is looked up every time rather than trusted from the token, so
+    # a removed member stops being signed in immediately.
     conn = main.get_connection()
     try:
         return load_member(conn, member_id)

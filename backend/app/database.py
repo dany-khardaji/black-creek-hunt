@@ -5,8 +5,7 @@ DB_PATH = (
     Path(__file__).parent.parent / "blackcreek.db"
 )  # Points at backend/blackcreek.db no matter where you run
 
-# The club's default property. Stands and features created without an explicit
-# property fall here, which keeps existing rows and test fixtures valid.
+# Stands and features with no property named are treated as this one.
 PRIMARY_PROPERTY_ID = "black-creek"
 
 # Table structure for the whole app
@@ -79,13 +78,9 @@ SCHEMA = f"""
 """
 
 
+# Lets members exist without a password, for Google sign-in. SQLite cannot
+# change that rule on an existing table, so the table is rebuilt instead.
 def migrate_members_for_auth(conn):
-    """Allow password-free Google members and record the Google subject.
-
-    SQLite cannot drop a NOT NULL constraint in place, so the table is rebuilt.
-    Postgres does this with ALTER TABLE ... DROP NOT NULL; the difference is
-    contained here so callers never see it.
-    """
     columns = conn.execute("PRAGMA table_info(members)").fetchall()
     if not columns:
         return  # Fresh database: SCHEMA already has the current shape.
@@ -100,9 +95,8 @@ def migrate_members_for_auth(conn):
             conn.commit()
         return
 
-    # hunts.member_id references members(id). Dropping the old table with
-    # foreign keys enforced would fail or take the hunt rows with it, and the
-    # pragma is ignored inside a transaction, so it is toggled around one.
+    # Hunt rows point at members, so the link is switched off while the table is
+    # swapped or the old hunts would be deleted along with it.
     conn.commit()
     conn.execute("PRAGMA foreign_keys = OFF")
     try:
@@ -122,8 +116,8 @@ def migrate_members_for_auth(conn):
             )
             """
         )
-        # Emails are lowercased on the way in so the allowlist match is
-        # case-insensitive on both SQLite and Postgres without a collation.
+        # Emails are lowercased as they move over, so capital letters never
+        # stop a member matching their account.
         conn.execute(
             """
             INSERT INTO members_migrated (
@@ -145,8 +139,8 @@ def migrate_members_for_auth(conn):
         conn.execute("PRAGMA foreign_keys = ON")
 
 
+# Brings an older database file up to the shape the app expects.
 def ensure_current_schema(conn):
-    """Apply the small local migration needed by the current development schema."""
     migrate_members_for_auth(conn)
 
     stand_columns = {
@@ -192,12 +186,9 @@ def ensure_current_schema(conn):
         for row in conn.execute("PRAGMA table_info(map_features)").fetchall()
     }
 
-    # Databases created before properties existed get the column with every
-    # existing row assigned to the primary property.
-    #
-    # No REFERENCES clause here: SQLite refuses to ADD COLUMN a foreign key that
-    # has a non-null default. Fresh databases still get the constraint from
-    # SCHEMA; migrated ones carry the column and default without it.
+    # Older stands and features are all assigned to the main property. The link
+    # back to that table is left off here because SQLite will not add one to an
+    # existing table.
     if stand_columns and "property_id" not in stand_columns:
         conn.execute(
             "ALTER TABLE stands ADD COLUMN property_id TEXT NOT NULL "

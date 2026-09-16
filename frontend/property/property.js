@@ -2,14 +2,11 @@ const MIN_MAP_ZOOM = 8;
 const PAN_BOUNDS_PADDING_RATIO = 5;
 const PAGE_ZOOM_THRESHOLD = 1.01;
 
-// Which property this page is showing. The server serves this one page for
-// every /property/{slug}, so the slug is the last segment of the path.
+// One page serves every property, so the name is read from the address bar.
 const PROPERTY_SLUG =
   location.pathname.split("/").filter(Boolean).pop() || "black-creek";
 
-// Leaflet needs a center at construction time, before the property has loaded.
-// These are the starting values; loadProperty() replaces them once the real
-// center and zoom arrive.
+// A starting view, because the map must be built before the real one loads.
 let DEFAULT_MAP_CENTER = [35.645, -78.442];
 let DEFAULT_MAP_ZOOM = 15;
 const map = L.map("map", {
@@ -55,8 +52,8 @@ L.DomEvent.on(propertyViewButton, "click", (event) => {
   propertyViewButton.blur();
 });
 
-// Leaflet caches the container size at init, so it must be told when the
-// viewport changes: rotation, and mobile browser chrome collapsing or expanding.
+// The map has to be told when the window changes size, such as turning a phone
+// sideways, or it keeps drawing at the old size.
 let resizeFrame = 0;
 function resizeMapToViewport() {
   // Toolbar animations fire a burst of resizes; settle on the last one.
@@ -69,10 +66,8 @@ function resizeMapToViewport() {
 const pageZoomHint = document.getElementById("page-zoom-hint");
 let isPageZoomRecoveryActive = false;
 
-// iOS permits page pinch-zoom over the check-in sheet. Leaflet normally owns
-// every gesture over the map, which can trap the page at that enlarged scale
-// after the sheet closes. At page scales above 1x, release Leaflet's touch
-// handlers so Safari can receive a pinch-out anywhere over the map.
+// If someone has pinched the whole page larger on an iPhone, the map stops
+// grabbing touches so they can pinch back out again.
 function setPageZoomRecovery(isActive) {
   if (isActive === isPageZoomRecoveryActive) return;
 
@@ -104,8 +99,7 @@ if (window.ResizeObserver) {
   window.addEventListener("orientationchange", resizeMapToViewport);
 }
 
-// visualViewport tracks toolbar collapse and page pinch-zoom changes that never
-// fire a window resize.
+// Catches phone toolbar and pinch changes that do not count as a window resize.
 window.visualViewport?.addEventListener("resize", () => {
   resizeMapToViewport();
   syncPageZoomRecovery();
@@ -117,8 +111,8 @@ window.addEventListener("pageshow", () => {
   syncPageZoomRecovery();
 });
 
-// Tooltips are hover-driven, so on touch they never fire and the panel carries
-// the same information in a readable form. Skip binding them entirely there.
+// Tooltips need a mouse, so on a touch screen they are skipped and the panel
+// shows the same details instead.
 const hasHover = window.matchMedia("(hover: hover)").matches;
 const isBottomSheet = () => window.matchMedia("(max-width: 640px)").matches;
 
@@ -482,8 +476,7 @@ function standMarkerIcon(stand) {
   const guestClass = hasGuest ? " has-guest" : "";
   // Re-applied on every refresh because setIcon rebuilds the element.
   const selectedClass = stand.id === selectedStandId ? " selected" : "";
-  // A full ring needs no dash pattern; a partial one lights the occupied share
-  // and leaves the remainder to the dim track underneath.
+  // A full stand draws a solid ring; a partly full one lights only its share.
   const gaugeDash = isFull
     ? ""
     : `stroke-dasharray="${filledLength.toFixed(2)} ${(GAUGE_CIRCUMFERENCE - filledLength).toFixed(2)}"`;
@@ -758,8 +751,7 @@ window.addEventListener("popstate", () => {
   }
 });
 
-// Recenters the map on the property this page is showing and titles the tab.
-// Runs alongside the first map-state fetch rather than blocking it.
+// Centres the map on this property and names the browser tab.
 async function loadProperty() {
   try {
     const property = await requestJson(

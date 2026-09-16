@@ -6,27 +6,23 @@ RESET_HOUR = 3  # Sessions reset at 3am local time, not midnight
 OVERDUE_AFTER = timedelta(hours=8)
 
 
-# Figures out "today's 3am" boundary, in UTC, based on the current time
+# The start of the current hunting day, as a UTC time.
 def session_boundary(now_utc):
-    # convert the current UTC time into the club's local time
     eastern_time = now_utc.astimezone(CLUB_TZ)
 
-    # build today's 3am, in local time
     todays_3am = eastern_time.replace(
         hour=RESET_HOUR, minute=0, second=0, microsecond=0
     )
 
-    # if it's currently before 3am, the "active" boundary is still YESTERDAY's 3am
+    # Before 3am still counts as the previous day's hunt.
     if eastern_time < todays_3am:
         todays_3am = todays_3am - timedelta(days=1)
 
-    # convert the boundary back to UTC, since that's how times are stored in the db
-    todays_3am = todays_3am.astimezone(timezone.utc)
-
-    return todays_3am
+    return todays_3am.astimezone(timezone.utc)
 
 
-# Counts active seats while ignoring checked-out and stale historical hunts.
+# Counts people still out, ignoring anyone checked out or left over from an
+# earlier day.
 def active_hunt_count(conn, stand_id, now_utc):
     boundary = session_boundary(now_utc)
 
@@ -43,13 +39,12 @@ def active_hunt_count(conn, stand_id, now_utc):
     return row[0]
 
 
-# Convenience for callers that only need a yes/no occupancy answer.
 def is_stand_occupied(conn, stand_id, now_utc):
     return active_hunt_count(conn, stand_id, now_utc) > 0
 
 
+# A hunt still open after eight hours is flagged so someone can check on them.
 def is_hunt_overdue(checked_in_at, now_utc):
-    """Return True once an active hunt has lasted at least eight hours."""
     if isinstance(checked_in_at, str):
         checked_in_at = datetime.fromisoformat(checked_in_at)
 
