@@ -50,3 +50,4 @@ Black Creek Hunt is a members-only hunting-club application for viewing properti
 - State the final verdict and any behavior that could not be verified.
 - Always specify what file and line.
 - If I ask how to change something manually, specify the file and line as well.
+- Check that changes will not block or complicate later slices in `plan.md` (for example, the Postgres move, sign-in, or Vercel deploy). Flag code that would need rework later, but do not ask for future features to be built early.

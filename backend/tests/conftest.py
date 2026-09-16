@@ -134,73 +134,90 @@ def seed_hunt(
     return cursor.lastrowid
 
 
-def build_connection(target=":memory:"):
-    """Open a test database carrying the production schema and settings.
+def open_connection(target):
+    """Open a test connection with the production SQLite settings.
 
-    Foreign keys are enforced here because get_connection enforces them in the
-    real application: without this, a test can insert a hunt referencing a
-    member that does not exist and pass where production would fail.
+    Foreign keys are enforced because get_connection enforces them in the real
+    application: without this, a test can insert a hunt referencing a member
+    that does not exist and pass where production would fail.
     """
-    conn = sqlite3.connect(target, check_same_thread=False)
-    conn.row_factory = sqlite3.Row
-    conn.executescript(SCHEMA)
-    conn.execute("PRAGMA foreign_keys = ON")
-    seed_primary_property(conn)
-    return conn
+    connection = sqlite3.connect(target, check_same_thread=False)
+    connection.row_factory = sqlite3.Row
+    connection.execute("PRAGMA foreign_keys = ON")
+    return connection
+
+
+def build_connection(target):
+    """Create a test database carrying the production schema."""
+    connection = open_connection(target)
+    connection.executescript(SCHEMA)
+    seed_primary_property(connection)
+    return connection
 
 
 @pytest.fixture
-def conn():
-    """A fresh in-memory database for one test."""
-    connection = build_connection()
+def conn(tmp_path):
+    """A fresh file-backed database for one test.
+
+    Backed by a file, not memory, so the test and the application can hold
+    separate connections to the same data: routes close the connection they
+    were handed, which would otherwise close the test's own.
+    """
+    connection = build_connection(tmp_path / "test.db")
     yield connection
     connection.close()
 
 
 @pytest.fixture
 def client(conn, monkeypatch):
-    """A TestClient whose routes read and write the test database.
+    """A TestClient whose requests each open their own connection.
 
     The acting member is seeded because foreign keys are enforced: check-in
     writes hunts.member_id, which must reference a real row. Slice 4 replaces
     this with an authenticated session for the same member.
     """
     seed_member(conn, main_module.CURRENT_MEMBER_ID)
-    monkeypatch.setattr(main_module, "get_connection", lambda: conn)
+    db_path = conn.execute("PRAGMA database_list").fetchone()["file"]
+
+    monkeypatch.setattr(
+        main_module,
+        "get_connection",
+        lambda: open_connection(db_path),
+    )
+
     return TestClient(app)
 
 
 @pytest.fixture
 def file_db(tmp_path, monkeypatch):
-    """A file-backed database where every request opens its own connection.
+    """A database addressed by path, with no open connection held by the test.
 
-    Some behavior only appears when connections are not shared: transaction
-    rollback, SQLite's write lock, and two requests racing for one seat. Those
-    tests use this instead of the in-memory `conn`.
+    Differs from `conn` in what it hands back: a path rather than a live
+    connection. Tests that assert on state after a request use this, opening
+    their own connection at each point so nothing observes stale data across
+    SQLite's write lock: transaction rollback, and two requests racing for
+    one seat.
 
-    Yields the path; open a connection with `build_connection(path)` to seed,
-    and `inspect_file_db(path)` to read the final state.
+    Yields the path; seed with `build_connection(path)`, and read the final
+    state with `inspect_file_db(path)`.
     """
     db_path = tmp_path / "test.db"
     setup = build_connection(db_path)
     setup.close()
 
     def fake_get_connection():
-        connection = sqlite3.connect(db_path, check_same_thread=False)
-        connection.row_factory = sqlite3.Row
-        connection.execute("PRAGMA foreign_keys = ON")
-        return connection
+        return open_connection(db_path)
 
     monkeypatch.setattr(main_module, "get_connection", fake_get_connection)
-    seed_member(fake_get_connection(), main_module.CURRENT_MEMBER_ID)
+    acting_member_connection = open_connection(db_path)
+    seed_member(acting_member_connection, main_module.CURRENT_MEMBER_ID)
+    acting_member_connection.close()
     return db_path
 
 
 def inspect_file_db(db_path):
-    """Open a fresh read connection to assert on a file database's final state."""
-    connection = sqlite3.connect(db_path, check_same_thread=False)
-    connection.row_factory = sqlite3.Row
-    return connection
+    """Open a fresh read connection to inspect final database state."""
+    return open_connection(db_path)
 
 
 @pytest.fixture

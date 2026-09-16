@@ -129,6 +129,16 @@ def test_checkout_nonexistent_hunt_rejected(client):
     assert response.status_code == 404
 
 
+# Routes close the connection they are handed, so a shared one would leave the
+# second request operating on a closed database.
+def test_client_supports_multiple_database_requests(client):
+    first = client.get("/api/properties")
+    second = client.get("/api/properties")
+
+    assert first.status_code == 200
+    assert second.status_code == 200
+
+
 # Checking out an already-closed hunt should be rejected with 409.
 # Uses a file so each request reopens its own connection, as production does.
 def test_checkout_twice_rejected(monkeypatch, tmp_path):
