@@ -1,20 +1,10 @@
-import sqlite3
 from datetime import datetime, timezone
 
-import pytest
-from app.database import SCHEMA
 from app.sessions import is_stand_occupied, session_boundary
 
-
-# Reusable fake database, shared across tests that ask for it
-# note: any test function that takes "conn" as a parameter automatically
-# gets a brand new one of these, built fresh, no copy-pasting the setup
-@pytest.fixture
-def conn():
-    connection = sqlite3.connect(":memory:")  # fresh in-memory db
-    connection.executescript(SCHEMA)  # create the real tables
-    yield connection  # hand it to the test
-    connection.close()  # cleanup after test finishes
+# The "conn" fixture these tests take comes from conftest.py, shared with
+# test_main.py: an in-memory database carrying the production schema.
+from conftest import seed_hunt, seed_stand
 
 
 # Boundary should be TODAY's 3am if current time is after 3am
@@ -41,15 +31,10 @@ def test_empty_stand_is_not_occupied(conn):
 def test_open_session_makes_stand_occupied(conn):
     now = datetime(2026, 11, 10, 9, 0, tzinfo=timezone.utc)
 
-    # insert a hunt with no checked_out_at, meaning it's still active
-    conn.execute(
-        "INSERT INTO hunts (stand_id, member_id, checked_in_at) VALUES (?, ?, ?)",
-        (
-            "test-stand-1",
-            "member-1",
-            "2026-11-10T12:00:00+00:00",
-        ),
-    )
+    # a hunt with no checked_out_at is still active
+    seed_stand(conn, "test-stand-1")
+    seed_hunt(conn, "test-stand-1", checked_in_at="2026-11-10T12:00:00+00:00")
+
     assert is_stand_occupied(conn, "test-stand-1", now) is True
 
 
@@ -58,14 +43,9 @@ def test_stale_session_does_not_occupy(conn):
     now = datetime(2026, 11, 10, 9, 0, tzinfo=timezone.utc)
 
     # this check-in happened BEFORE the reset boundary, so it's stale
-    conn.execute(
-        "INSERT INTO hunts (stand_id, member_id, checked_in_at) VALUES (?, ?, ?)",
-        (
-            "test-stand-1",
-            "member-1",
-            "2026-11-09T22:00:00+00:00",
-        ),
-    )
+    seed_stand(conn, "test-stand-1")
+    seed_hunt(conn, "test-stand-1", checked_in_at="2026-11-09T22:00:00+00:00")
+
     assert is_stand_occupied(conn, "test-stand-1", now) is False
 
 
@@ -74,15 +54,14 @@ def test_checked_out_session_does_not_occupy(conn):
     now = datetime(2026, 11, 10, 9, 0, tzinfo=timezone.utc)
 
     # this hunt has both checked_in_at AND checked_out_at set
-    conn.execute(
-        "INSERT INTO hunts (stand_id, member_id, checked_in_at, checked_out_at) VALUES (?, ?, ?, ?)",
-        (
-            "test-stand-1",
-            "member-1",
-            "2026-11-10T12:00:00+00:00",
-            "2026-11-10T15:00:00+00:00",
-        ),
+    seed_stand(conn, "test-stand-1")
+    seed_hunt(
+        conn,
+        "test-stand-1",
+        checked_in_at="2026-11-10T12:00:00+00:00",
+        checked_out_at="2026-11-10T15:00:00+00:00",
     )
+
     assert is_stand_occupied(conn, "test-stand-1", now) is False
 
 
@@ -90,14 +69,9 @@ def test_checked_out_session_does_not_occupy(conn):
 def test_session_before_boundary_is_still_active(conn):
     now = datetime(2026, 11, 10, 6, 0, tzinfo=timezone.utc)
 
-    conn.execute(
-        "INSERT INTO hunts (stand_id, member_id, checked_in_at) VALUES (?, ?, ?)",
-        (
-            "test-stand-1",
-            "member-1",
-            "2026-11-10T02:00:00+00:00",
-        ),
-    )
+    seed_stand(conn, "test-stand-1")
+    seed_hunt(conn, "test-stand-1", checked_in_at="2026-11-10T02:00:00+00:00")
+
     assert is_stand_occupied(conn, "test-stand-1", now) is True
 
 
