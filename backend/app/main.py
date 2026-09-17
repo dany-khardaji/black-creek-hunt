@@ -12,12 +12,8 @@ from fastapi.staticfiles import StaticFiles
 
 app = FastAPI()
 
-# Authentication replaces this development identity in Slice 3.
-CURRENT_MEMBER_ID = "member-1"
 
-
-# Sends someone who is not signed in to the login page. 303 tells the browser to
-# ask for that page normally, whatever kind of request it was making.
+# --- Handlers and helpers -------------------------------------------------------------
 @app.exception_handler(auth.RedirectToLogin)
 def redirect_to_login(request: Request, exc: auth.RedirectToLogin):
     return RedirectResponse(config.LOGIN_PATH, status_code=303)
@@ -39,7 +35,6 @@ def missing_stand_detail(stand_id):
     }
 
 
-# Shows a guest's full name, or a member as "Mike D." to keep it short.
 def display_name(active_hunt):
     if active_hunt["guest_name"]:
         return active_hunt["guest_name"]
@@ -62,9 +57,7 @@ def utc_now():
     return datetime.now(timezone.utc)
 
 
-# --- Authentication ---------------------------------------------------------
-
-
+# --- Authentication endpoints ---------------------------------------------------------
 @app.post("/api/auth/login")
 def login(payload: LoginRequest, response: Response):
     conn = get_connection()
@@ -121,17 +114,16 @@ def read_current_member(member=Depends(auth.require_api_member)):
     return auth.public_member(member)
 
 
-# Not guarded on purpose: someone holding a broken or expired cookie still has
-# to be able to clear it.
+# not guarded on purpose: someone holding a broken or expired cookie still has to be able to clear it.
 @app.post("/api/auth/logout")
 def logout(response: Response):
     auth.clear_session_cookie(response)
     return {"signed_out": True}
 
 
-# Lists the properties shown on the homepage.
+# --- App API endpoints ----------------------------------------------------------------
 @app.get("/api/properties")
-def list_properties():
+def list_properties(member=Depends(auth.require_api_member)):
     conn = get_connection()
     try:
         return conn.execute(
@@ -146,9 +138,9 @@ def list_properties():
         conn.close()
 
 
-# Returns one property, including the map center and zoom its page needs.
+
 @app.get("/api/properties/{slug}")
-def get_property(slug: str):
+def get_property(slug: str, member=Depends(auth.require_api_member)):
     conn = get_connection()
     try:
         row = conn.execute(
@@ -173,9 +165,9 @@ def get_property(slug: str):
         conn.close()
 
 
-# How many people are out across the whole club, for the homepage counter.
+
 @app.get("/api/live-count")
-def get_live_count():
+def get_live_count(member=Depends(auth.require_api_member)):
     conn = get_connection()
     boundary = session_boundary(utc_now()).isoformat()
 
@@ -193,9 +185,9 @@ def get_live_count():
         conn.close()
 
 
-# Handles a member checking into a stand.
+
 @app.post("/api/hunts")
-def check_in(request: CheckInRequest):
+def check_in(request: CheckInRequest, member=Depends(auth.require_api_member)):
     conn = get_connection()
     now = utc_now()
     requested_seats = Counter(
@@ -275,7 +267,7 @@ def check_in(request: CheckInRequest):
 
         host_cursor = conn.execute(
             "INSERT INTO hunts (stand_id, member_id, checked_in_at) VALUES (?, ?, ?)",
-            (request.stand_id, CURRENT_MEMBER_ID, now.isoformat()),
+            (request.stand_id, member["id"], now.isoformat()),
         )
         host_hunt_id = host_cursor.lastrowid
 
@@ -290,7 +282,7 @@ def check_in(request: CheckInRequest):
                 """,
                 (
                     guest.stand_id,
-                    CURRENT_MEMBER_ID,
+                    member["id"],
                     host_hunt_id,
                     now.isoformat(),
                     guest.name,
@@ -310,9 +302,9 @@ def check_in(request: CheckInRequest):
         conn.close()
 
 
-# Checks out a member's own host hunt and every guest linked to it.
+
 @app.post("/api/hunts/{hunt_id}/check-out")
-def check_out(hunt_id: int):
+def check_out(hunt_id: int, member=Depends(auth.require_api_member)):
     conn = get_connection()
     now = utc_now()
 
@@ -325,7 +317,7 @@ def check_out(hunt_id: int):
                 status_code=404,
                 detail={"code": "hunt_not_found", "message": "Hunt not found"},
             )
-        if hunt["member_id"] != CURRENT_MEMBER_ID:
+        if hunt["member_id"] != member["id"] and not member["is_admin"]:
             raise HTTPException(
                 status_code=403,
                 detail={
@@ -379,9 +371,9 @@ def check_out(hunt_id: int):
         conn.close()
 
 
-# Returns everything one property's map needs in one call.
+
 @app.get("/api/map-state")
-def get_map_state(property: str = PRIMARY_PROPERTY_ID):
+def get_map_state(property: str=PRIMARY_PROPERTY_ID, member=Depends(auth.require_api_member)):
     conn = get_connection()
     now = utc_now()
     boundary = session_boundary(now).isoformat()
@@ -461,7 +453,7 @@ def get_map_state(property: str = PRIMARY_PROPERTY_ID):
                 member_name = display_name(member_data)
                 is_guest = active_hunt["guest_name"] is not None
                 can_check_out = (
-                    not is_guest and active_hunt["member_id"] == CURRENT_MEMBER_ID
+                    not is_guest and (active_hunt["member_id"] == member["id"] or bool(member["is_admin"]))
                 )
                 occupants.append(
                     {
@@ -536,30 +528,31 @@ def get_map_state(property: str = PRIMARY_PROPERTY_ID):
         conn.close()
 
 
-# --- Static pages -----------------------------------------------------------
-# Pages are served by this same app so the site and its API share one address.
-# They must stay below the /api routes, because the catch-all at the bottom of
-# this file would otherwise swallow them.
-
+# --- Static page endpoints -----------------------------------------------------------
+# pages are served by this same app so the site and its API share one address. They must stay below the /api routes,
+# because the catch-all at the bottom of this file would otherwise swallow them.
 FRONTEND = Path(__file__).parent.parent.parent / "frontend"
 
 
 @app.get("/", include_in_schema=False)
-def home_page():
+def home_page(member=Depends(auth.require_page_member)):
     return FileResponse(FRONTEND / "home" / "index.html")
 
 
 @app.get("/login", include_in_schema=False)
-def login_page():
+def login_page(request: Request):
+    # Someone already signed in has no use for the form.
+    if auth.current_member_or_none(request) is not None:
+        return RedirectResponse("/", status_code=303)
     return FileResponse(FRONTEND / "login" / "index.html")
 
 
-# One page serves every property; property.js reads the slug from the path.
+# one page serves every property; property.js reads the slug from the path.
 @app.get("/property/{slug}", include_in_schema=False)
-def property_page(slug: str):
+def property_page(slug: str, member=Depends(auth.require_page_member)):
     return FileResponse(FRONTEND / "property" / "index.html")
+# --------------------------------------------------------------------------------------
 
 
-# Files live under /static/ so that /property/anything does not accidentally
-# match a stylesheet and return the page instead.
+# files live under /static/ so that /property/anything does not accidentally match a stylesheet and return the page instead.
 app.mount("/static", StaticFiles(directory=FRONTEND), name="static")
