@@ -1,6 +1,5 @@
 import sqlite3
 import threading
-import time
 from datetime import datetime, timedelta, timezone
 
 import app.main as main_module  # The module holding get_connection, so we can swap it out
@@ -16,6 +15,7 @@ from app.main import app  # The actual FastAPI app we're testing
 # automatically; these names are imported only where a test calls them directly.
 from conftest import (
     DEFAULT_MEMBER_ID,
+    authed_client,
     build_connection,
     inspect_file_db,
     seed_hunt,
@@ -64,7 +64,7 @@ def test_concurrent_checkin_only_one_wins(file_db):
     results = []
 
     def make_request():
-        response = TestClient(app).post(
+        response = authed_client().post(
             "/api/hunts", json={"stand_id": "test-stand-1", "guests": []}
         )
         results.append(response.status_code)
@@ -81,9 +81,8 @@ def test_concurrent_checkin_only_one_wins(file_db):
     assert results.count(409) == 1
 
 
-# More than 2 guests should be rejected by the validator, no database needed
-def test_too_many_guests_rejected():
-    client = TestClient(app)
+# The 422 comes from the validator, but the guard runs first and needs a real member to exist.
+def test_too_many_guests_rejected(conn, client):
     response = client.post(
         "/api/hunts",
         json={
@@ -157,7 +156,7 @@ def test_checkout_twice_rejected(monkeypatch, tmp_path):
         return c
 
     monkeypatch.setattr(main_module, "get_connection", fake_get_connection)
-    client = TestClient(app)
+    client = authed_client()
 
     first_response = client.post(f"/api/hunts/{hunt_id}/check-out")
     second_response = client.post(f"/api/hunts/{hunt_id}/check-out")
@@ -171,7 +170,7 @@ def test_second_checkin_does_not_overwrite_original(file_db):
     setup = build_connection(file_db)
     seed_stand(setup, "test-stand-1")
     setup.close()
-    client = TestClient(app)
+    client = authed_client()
 
     first = client.post("/api/hunts", json={"stand_id": "test-stand-1", "guests": []})
     second = client.post("/api/hunts", json={"stand_id": "test-stand-1", "guests": []})
@@ -195,7 +194,7 @@ def test_checkin_with_two_guests_creates_three_rows(file_db):
         seed_stand(setup, stand_id)
     setup.close()
 
-    response = TestClient(app).post(
+    response = authed_client().post(
         "/api/hunts",
         json={
             "stand_id": "test-stand-1",
@@ -223,7 +222,7 @@ def test_checkin_guest_stand_occupied_rejects_all(file_db):
     seed_hunt(setup, "test-stand-2", member_id="member-2")
     setup.close()
 
-    response = TestClient(app).post(
+    response = authed_client().post(
         "/api/hunts",
         json={
             "stand_id": "test-stand-1",
@@ -268,7 +267,7 @@ def test_checkout_cascades_to_guests(file_db):
     for stand_id in ["test-stand-1", "test-stand-2"]:
         seed_stand(setup, stand_id)
     setup.close()
-    client = TestClient(app)
+    client = authed_client()
 
     checkin_response = client.post(
         "/api/hunts",
@@ -295,11 +294,11 @@ def test_checkout_cascades_to_guests(file_db):
 
 
 @pytest.mark.parametrize("field", ["name", "phone"])
-def test_blank_guest_fields_rejected(field):
+def test_blank_guest_fields_rejected(conn, client, field):
     guest = {"name": "Guest A", "phone": "555-0100", "stand_id": "stand-2"}
     guest[field] = "   "
 
-    response = TestClient(app).post(
+    response = client.post(
         "/api/hunts",
         json={"stand_id": "stand-1", "guests": [guest]},
     )
@@ -314,9 +313,7 @@ def test_guest_can_share_host_stand_when_capacity_allows(conn, client):
         "/api/hunts",
         json={
             "stand_id": "stand-1",
-            "guests": [
-                {"name": "Guest A", "phone": "555-0100", "stand_id": "stand-1"}
-            ],
+            "guests": [{"name": "Guest A", "phone": "555-0100", "stand_id": "stand-1"}],
         },
     )
 
@@ -346,7 +343,7 @@ def test_checkin_over_capacity_rejects_every_row(file_db):
     seed_stand(setup, "stand-1", name="Double Stand", type="box", capacity=2)
     setup.close()
 
-    response = TestClient(app).post(
+    response = authed_client().post(
         "/api/hunts",
         json={
             "stand_id": "stand-1",
@@ -385,7 +382,7 @@ def test_concurrent_checkins_only_one_claims_final_seat(file_db):
     results = []
 
     def make_request():
-        response = TestClient(app).post(
+        response = authed_client().post(
             "/api/hunts", json={"stand_id": "stand-1", "guests": []}
         )
         results.append(response.status_code)
@@ -413,9 +410,7 @@ def test_nonexistent_guest_stand_rejected(conn, client):
         "/api/hunts",
         json={
             "stand_id": "stand-1",
-            "guests": [
-                {"name": "Guest A", "phone": "555-0100", "stand_id": "missing"}
-            ],
+            "guests": [{"name": "Guest A", "phone": "555-0100", "stand_id": "missing"}],
         },
     )
 
@@ -432,9 +427,7 @@ def test_retired_guest_stand_rejected(conn, client):
         "/api/hunts",
         json={
             "stand_id": "stand-1",
-            "guests": [
-                {"name": "Guest A", "phone": "555-0100", "stand_id": "stand-2"}
-            ],
+            "guests": [{"name": "Guest A", "phone": "555-0100", "stand_id": "stand-2"}],
         },
     )
 
@@ -699,7 +692,12 @@ def legacy_members_connection(tmp_path):
     """A database whose members table predates Google sign-in."""
     conn = sqlite3.connect(tmp_path / "legacy.db")
     conn.row_factory = sqlite3.Row
-    conn.executescript(SCHEMA.replace("CREATE TABLE IF NOT EXISTS members", "CREATE TABLE IF NOT EXISTS members_unused"))
+    conn.executescript(
+        SCHEMA.replace(
+            "CREATE TABLE IF NOT EXISTS members",
+            "CREATE TABLE IF NOT EXISTS members_unused",
+        )
+    )
     conn.executescript("DROP TABLE IF EXISTS members_unused;" + LEGACY_MEMBERS_SCHEMA)
     seed_primary_property(conn)
     conn.execute(
@@ -769,7 +767,14 @@ def test_migration_allows_google_member_afterwards(tmp_path):
             id, email, google_sub, first_name, last_name, created_at
         ) VALUES (?, ?, ?, ?, ?, ?)
         """,
-        ("m2", "gale@example.com", "108xyz", "Gale", "Ray", "2026-09-15T00:00:00+00:00"),
+        (
+            "m2",
+            "gale@example.com",
+            "108xyz",
+            "Gale",
+            "Ray",
+            "2026-09-15T00:00:00+00:00",
+        ),
     )
     conn.commit()
 
@@ -1027,7 +1032,9 @@ def test_logout_works_without_a_valid_session(anonymous_client):
 @pytest.mark.parametrize(
     "email", ["nine@example.com", "stranger@example.com", "google@example.com"]
 )
-def test_every_login_attempt_checks_a_password(anonymous_client, conn, monkeypatch, email):
+def test_every_login_attempt_checks_a_password(
+    anonymous_client, conn, monkeypatch, email
+):
     seed_member(conn, "member-9", email="nine@example.com", password="swamp-oak-42")
     seed_member(conn, "member-8", email="google@example.com", password_hash=None)
 
@@ -1047,7 +1054,9 @@ def test_every_login_attempt_checks_a_password(anonymous_client, conn, monkeypat
 
 
 # A damaged stored hash must not answer quicker than a real one either
-def test_a_broken_stored_hash_still_checks_a_password(anonymous_client, conn, monkeypatch):
+def test_a_broken_stored_hash_still_checks_a_password(
+    anonymous_client, conn, monkeypatch
+):
     seed_member(conn, "member-9", email="nine@example.com", password_hash="not-a-hash")
 
     checks = []

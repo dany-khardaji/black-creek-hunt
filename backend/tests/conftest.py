@@ -6,12 +6,13 @@ from datetime import datetime, timezone
 
 import app.main as main_module
 import pytest
-from app import auth
+from app import auth, config
 from app.database import PRIMARY_PROPERTY_ID, SCHEMA
 from app.main import app
 from fastapi.testclient import TestClient
 
 DEFAULT_MEMBER_ID = "member-1"
+ADMIN_MEMBER_ID = "member-admin"
 
 
 # Any test that reads the map needs this property row to exist.
@@ -154,33 +155,48 @@ def conn(tmp_path):
     connection.close()
 
 
-@pytest.fixture
-def client(conn, monkeypatch):
-    # The acting member is added first because checking in records who did it,
-    # and that has to point at a real person.
-    seed_member(conn, main_module.CURRENT_MEMBER_ID)
-    db_path = conn.execute("PRAGMA database_list").fetchone()["file"]
+# Signs a client in the same way the real site does: a genuine token in the
+# real cookie. Tests therefore exercise the whole chain rather than skipping it.
+def authed_client(member_id=DEFAULT_MEMBER_ID):
+    client = TestClient(app)
+    client.cookies.set(config.SESSION_COOKIE_NAME, auth.create_session_token(member_id))
+    return client
 
+
+def _point_app_at(conn, monkeypatch):
+    """Make the app read the test database instead of the real one."""
+    db_path = conn.execute("PRAGMA database_list").fetchone()["file"]
     monkeypatch.setattr(
         main_module,
         "get_connection",
         lambda: open_connection(db_path),
     )
+    return db_path
 
-    return TestClient(app)
+
+@pytest.fixture
+def client(conn, monkeypatch):
+    # The acting member is added first because checking in records who did it,
+    # and that has to point at a real person.
+    seed_member(conn, DEFAULT_MEMBER_ID)
+    _point_app_at(conn, monkeypatch)
+
+    return authed_client()
+
+
+@pytest.fixture
+def admin_client(conn, monkeypatch):
+    seed_member(conn, ADMIN_MEMBER_ID, first_name="Ada", is_admin=1)
+    _point_app_at(conn, monkeypatch)
+
+    return authed_client(ADMIN_MEMBER_ID)
 
 
 # A caller who is not signed in. Still points at the test database, so a mistake
 # in the guards shows up as a failing test rather than a read of the real one.
 @pytest.fixture
 def anonymous_client(conn, monkeypatch):
-    db_path = conn.execute("PRAGMA database_list").fetchone()["file"]
-
-    monkeypatch.setattr(
-        main_module,
-        "get_connection",
-        lambda: open_connection(db_path),
-    )
+    _point_app_at(conn, monkeypatch)
 
     return TestClient(app)
 
@@ -198,7 +214,7 @@ def file_db(tmp_path, monkeypatch):
 
     monkeypatch.setattr(main_module, "get_connection", fake_get_connection)
     acting_member_connection = open_connection(db_path)
-    seed_member(acting_member_connection, main_module.CURRENT_MEMBER_ID)
+    seed_member(acting_member_connection, DEFAULT_MEMBER_ID)
     acting_member_connection.close()
     return db_path
 

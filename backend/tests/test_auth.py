@@ -161,7 +161,9 @@ def test_token_missing_a_required_claim_is_rejected(missing):
 
 # The tokens this module mints carry every claim it requires back
 def test_minted_token_satisfies_its_own_requirements():
-    assert auth.decode_session_token(auth.create_session_token("member-1")) == "member-1"
+    assert (
+        auth.decode_session_token(auth.create_session_token("member-1")) == "member-1"
+    )
 
 
 # The member row is found by id

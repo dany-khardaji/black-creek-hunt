@@ -36,3 +36,4 @@ yarn-error.log*
 .DS_Store
 Thumbs.db
 Notes.md
+.vscode/settings.json
