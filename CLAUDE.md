@@ -14,4 +14,17 @@
 - Only comment non-obvious logic. Use one plain-English line a beginner could understand. No jargon, no restating the code.
 - Don't use shorthand or unexplained results; always say what a number, status, or term refers to and what it means.
 - Anytime you state an http error code (402, 404 etc.) put in parenthesis what it means next to it so I can remember http status codes easier.
-- When specifying a line number allow me to click on it to get to the line.
+
+## File references
+
+Whenever referencing code in your responses, make every file/line reference a clickable Markdown link using this exact format:
+
+[file.ts:42](relative/path/file.ts#L42)
+
+For ranges:
+
+[file.ts:42-58](relative/path/file.ts#L42-L58)
+
+Always use workspace-relative paths.
+Do not use plain `file.ts:42` references.
+Do not use heading anchors.

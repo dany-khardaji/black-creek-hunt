@@ -1053,7 +1053,7 @@ def test_every_login_attempt_checks_a_password(
     assert len(checks) == 1
 
 
-# A damaged stored hash must not answer quicker than a real one either
+# a damaged stored hash must not answer quicker than a real one either
 def test_a_broken_stored_hash_still_checks_a_password(
     anonymous_client, conn, monkeypatch
 ):
@@ -1073,3 +1073,70 @@ def test_a_broken_stored_hash_still_checks_a_password(
 
     assert response.status_code == 401
     assert len(checks) >= 1
+
+
+# --- Identity and authorization ---------------------------------------------
+# the hunt records whoever was signed in, not one hardcoded member. This is the guard against a fixed identity creeping back in.
+def test_check_in_records_the_signed_in_member(file_db):
+    setup = build_connection(file_db)
+    seed_stand(setup, "stand-1")
+    seed_stand(setup, "stand-2")
+    seed_member(setup, "member-2", first_name="Sara")
+    setup.close()
+
+    first = authed_client().post(
+        "/api/hunts", json={"stand_id": "stand-1", "guests": []}
+    )
+    second = authed_client("member-2").post(
+        "/api/hunts", json={"stand_id": "stand-2", "guests": []}
+    )
+
+    assert first.status_code == 200
+    assert second.status_code == 200
+
+    check = inspect_file_db(file_db)
+    owners = dict(
+        check.execute("SELECT stand_id, member_id FROM hunts").fetchall()
+    )
+    check.close()
+
+    assert owners["stand-1"] == DEFAULT_MEMBER_ID
+    assert owners["stand-2"] == "member-2"
+
+
+# an admin may close a stand someone else left open
+def test_admin_can_check_out_another_members_hunt(conn, admin_client):
+    seed_stand(conn, "stand-1")
+    hunt_id = seed_hunt(conn, "stand-1", member_id=DEFAULT_MEMBER_ID)
+
+    response = admin_client.post(f"/api/hunts/{hunt_id}/check-out")
+
+    assert response.status_code == 200
+    assert response.json()["checked_out_at"] is not None
+
+
+# the button the map offers must match what checkout actually permits, or a
+# member clicks something that then fails.
+def test_can_check_out_matches_who_may_check_out(conn, client):
+    seed_stand(conn, "stand-1")
+    seed_stand(conn, "stand-2")
+    seed_hunt(conn, "stand-1", member_id=DEFAULT_MEMBER_ID)
+    seed_hunt(conn, "stand-2", member_id="member-2")
+
+    data = client.get("/api/map-state").json()
+    own = next(s for s in data["stands"] if s["id"] == "stand-1")
+    other = next(s for s in data["stands"] if s["id"] == "stand-2")
+
+    assert own["occupants"][0]["can_check_out"] is True
+    assert other["occupants"][0]["can_check_out"] is False
+
+
+# an admin sees the button on every occupied stand, which is intended
+def test_admin_can_check_out_every_occupied_stand(conn, admin_client):
+    seed_stand(conn, "stand-1")
+    seed_hunt(conn, "stand-1", member_id=DEFAULT_MEMBER_ID)
+
+    data = admin_client.get("/api/map-state").json()
+    stand = next(s for s in data["stands"] if s["id"] == "stand-1")
+
+    assert stand["occupants"][0]["can_check_out"] is True
