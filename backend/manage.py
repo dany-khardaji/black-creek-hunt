@@ -19,6 +19,11 @@ def prompt_password():
     first = getpass.getpass("Password: ")
     if not first:
         fail("Password cannot be empty.")
+    # Login strips edge whitespace and caps passwords at 1,024 characters.
+    if first != first.strip():
+        fail("Password cannot start or end with whitespace.")
+    if len(first) > 1024:
+        fail("Password cannot exceed 1,024 characters.")
     if first != getpass.getpass("Confirm password: "):
         fail("Passwords did not match.")
     return first

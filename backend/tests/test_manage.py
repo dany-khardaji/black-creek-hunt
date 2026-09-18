@@ -1,9 +1,11 @@
 import sqlite3
 
 import app.database as database_module
+import app.main as main_module
 import manage
 import pytest
 from app import auth
+from fastapi.testclient import TestClient
 
 
 # manage.py writes to the real blackcreek.db, so every test here redirects it to
@@ -128,3 +130,57 @@ def test_reset_password_for_an_unknown_email_exits(cli_db, capsys):
 
     assert exit_info.value.code == 1
     assert "No member found" in capsys.readouterr().err
+
+
+@pytest.mark.parametrize("command", ["create-member", "reset-password"])
+@pytest.mark.parametrize(
+    "password, message",
+    [
+        ("", "cannot be empty"),
+        ("   ", "cannot start or end with whitespace"),
+        (" good-pass", "cannot start or end with whitespace"),
+        ("good-pass ", "cannot start or end with whitespace"),
+        ("\tgood-pass", "cannot start or end with whitespace"),
+        ("good-pass\n", "cannot start or end with whitespace"),
+        ("x" * 1025, "cannot exceed 1,024 characters"),
+    ],
+)
+def test_unusable_passwords_leave_members_unchanged(
+    cli_db, monkeypatch, capsys, command, password, message
+):
+    create_args = [
+        "create-member", "--email", "test@example.com",
+        "--first-name", "Sam", "--last-name", "Reed",
+    ]
+    if command == "reset-password":
+        manage.main(create_args)
+    else:
+        database_module.init_db()
+    before = [dict(row) for row in read_members(cli_db)]
+    monkeypatch.setattr(manage.getpass, "getpass", lambda *args: password)
+
+    args = create_args if command == "create-member" else [
+        "reset-password", "--email", "test@example.com",
+    ]
+    with pytest.raises(SystemExit) as exit_info:
+        manage.main(args)
+
+    assert exit_info.value.code == 1
+    assert message in capsys.readouterr().err
+    assert [dict(row) for row in read_members(cli_db)] == before
+
+
+@pytest.mark.parametrize("password", ["good pass", "x" * 1024])
+def test_accepted_passwords_work_at_login(cli_db, monkeypatch, password):
+    monkeypatch.setattr(manage.getpass, "getpass", lambda *args: password)
+    monkeypatch.setattr(main_module, "get_connection", database_module.get_connection)
+    manage.main([
+        "create-member", "--email", "test@example.com",
+        "--first-name", "Sam", "--last-name", "Reed",
+    ])
+
+    response = TestClient(main_module.app).post(
+        "/api/auth/login", json={"email": "test@example.com", "password": password}
+    )
+
+    assert response.status_code == 200
