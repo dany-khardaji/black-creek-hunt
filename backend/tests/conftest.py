@@ -1,8 +1,13 @@
 # Shared test setup. Pytest loads this file on its own, so a test uses anything
 # here just by naming it as an argument.
 
+import os
 import sqlite3
 from datetime import datetime, timezone
+
+# Set before app.config is imported below: tests must read settings from the
+# environment alone, never from a developer's local .env file.
+os.environ.setdefault("SKIP_ENV_FILE", "1")
 
 import app.main as main_module
 import pytest

@@ -1,7 +1,31 @@
 import os
+from pathlib import Path
 
 # Settings are read once when the app starts. Anything wrong stops it starting,
 # so a bad deploy fails right away instead of running with broken sign-in.
+
+_ENV_FILE = Path(__file__).parent.parent.parent / ".env"
+
+
+# Reads .env into the environment for local development. A value already set in
+# the shell wins, so a real deployment's variables are never overwritten by a
+# stray file. Hand-rolled rather than adding python-dotenv for ten lines.
+def _load_env_file(path=_ENV_FILE):
+    # Tests and real deployments set this, so settings come only from the
+    # environment and a developer's local .env can never change the result.
+    if os.environ.get("SKIP_ENV_FILE") or not path.is_file():
+        return
+
+    for line in path.read_text().splitlines():
+        line = line.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+
+        name, _, value = line.partition("=")
+        os.environ.setdefault(name.strip(), value.strip().strip("\"'"))
+
+
+_load_env_file()
 
 _TRUE_VALUES = {"1", "true", "yes", "on"}
 _FALSE_VALUES = {"0", "false", "no", "off", ""}
