@@ -26,6 +26,19 @@ body {
   object-position: left center;
 }
 
+/* smaller than the default button so it sits beside the logo without crowding
+   it, while keeping the 44px touch target from base.css */
+.sign-out {
+  flex-shrink: 0;
+  padding: 0.5rem 0.75rem;
+  font-size: 0.9rem;
+  color: var(--muted);
+}
+
+.sign-out:hover:not(:disabled) {
+  color: var(--text);
+}
+
 .home-main {
   max-width: 60rem;
   margin: 0 auto;

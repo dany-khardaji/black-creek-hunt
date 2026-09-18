@@ -5,6 +5,7 @@ const homeMessage = document.getElementById("home-message");
 const liveCounter = document.getElementById("live-counter");
 const liveCountValue = document.getElementById("live-count-value");
 const liveCountLabel = document.getElementById("live-count-label");
+const signOutButton = document.getElementById("sign-out");
 
 function announce(message, tone = "info") {
   homeMessage.textContent = message;
@@ -99,3 +100,16 @@ async function load() {
 }
 
 load();
+
+signOutButton.addEventListener("click", async () => {
+  signOutButton.disabled = true;
+
+  try {
+    await fetch("/api/auth/logout", { method: "POST", credentials: "include" });
+  } catch {
+    // the cookie may already be gone, so a failed request still ends at login
+  }
+
+  // replace() rather than assign() so back does not return to a signed-out page
+  window.location.replace("/login");
+});
