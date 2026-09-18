@@ -204,6 +204,22 @@ async function requestJson(path, options = {}) {
   return payload;
 }
 
+// Set once a redirect is under way. The 30-second refresh and a click can both
+// fail at the same moment, and only one of them should navigate.
+let isRedirecting = false;
+
+// An expired or missing session means the sign-in page, not an error message.
+// replace() rather than assign() so the back button does not return here and
+// bounce straight back to the login page again.
+function redirectedToLogin(error) {
+  if (!(error instanceof ApiError) || error.status !== 401) return false;
+  if (!isRedirecting) {
+    isRedirecting = true;
+    window.location.replace("/login");
+  }
+  return true;
+}
+
 function formatApiError(error) {
   if (!(error instanceof ApiError)) {
     return "The network request failed. Check that the API is running and try again.";
@@ -630,6 +646,7 @@ async function refreshMapState({
     if (deepLinkedStandId) revealSelectedStand(deepLinkedStandId);
     if (!quiet) announce("");
   } catch (error) {
+    if (redirectedToLogin(error)) return;
     announce(formatApiError(error), "error");
   } finally {
     isInitialLoad = false;
@@ -692,6 +709,7 @@ checkInForm.addEventListener("submit", async (event) => {
     await refreshMapState({ quiet: true, captureCurrentDraft: false });
     announce("Check-in complete.");
   } catch (error) {
+    if (redirectedToLogin(error)) return;
     draft.message = formatApiError(error);
     draft.tone = "error";
     await refreshMapState({ quiet: true });
@@ -718,6 +736,7 @@ checkOutButton.addEventListener("click", async () => {
     await refreshMapState({ quiet: true });
     announce("Checkout complete.");
   } catch (error) {
+    if (redirectedToLogin(error)) return;
     const message = formatApiError(error);
     await refreshMapState({ quiet: true });
     panelMessage.textContent = message;

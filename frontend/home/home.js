@@ -12,9 +12,28 @@ function announce(message, tone = "info") {
   homeMessage.hidden = message === "";
 }
 
+class ApiError extends Error {
+  constructor(status) {
+    super(`Request failed with status ${status}`);
+    this.status = status;
+  }
+}
+
+// Set once a redirect is under way, so two failing requests cannot both fire it.
+let isRedirecting = false;
+
+// An expired or missing session means the sign-in page, not an error message.
+// replace() rather than assign() so the back button does not return here and
+// bounce straight back to the login page again.
+function redirectToLogin() {
+  if (isRedirecting) return;
+  isRedirecting = true;
+  window.location.replace("/login");
+}
+
 async function requestJson(path) {
   const response = await fetch(path, { credentials: "include" });
-  if (!response.ok) throw new Error(`Request failed with status ${response.status}`);
+  if (!response.ok) throw new ApiError(response.status);
   return response.json();
 }
 
@@ -67,7 +86,11 @@ async function load() {
     ]);
     renderProperties(properties);
     renderLiveCount(live.live_count);
-  } catch {
+  } catch (error) {
+    if (error instanceof ApiError && error.status === 401) {
+      redirectToLogin();
+      return;
+    }
     announce(
       "Could not load properties. Check that the API is running and try again.",
       "error",
