@@ -99,3 +99,24 @@ if not 1 <= JWT_EXPIRE_MINUTES <= 1440:
 
 SESSION_COOKIE_NAME = "bch_session"
 LOGIN_PATH = "/login"
+
+# --- Google sign-in ---------------------------------------------------------
+
+GOOGLE_CLIENT_ID = os.environ.get("GOOGLE_CLIENT_ID") or ""
+GOOGLE_CLIENT_SECRET = os.environ.get("GOOGLE_CLIENT_SECRET") or ""
+
+# Where this app is reached. The redirect URI is built from it rather than
+# written out separately, so the value sent to Google cannot drift from the one
+# registered in the Google Cloud console.
+APP_ORIGIN = (os.environ.get("APP_ORIGIN") or "http://localhost:8000").rstrip("/")
+
+GOOGLE_REDIRECT_PATH = "/api/auth/google/callback"
+GOOGLE_REDIRECT_URI = f"{APP_ORIGIN}{GOOGLE_REDIRECT_PATH}"
+
+# Google's own document listing its current endpoints and signing keys, so this
+# app never hardcodes URLs that Google may move.
+GOOGLE_DISCOVERY_URL = "https://accounts.google.com/.well-known/openid-configuration"
+
+# Both halves are needed to talk to Google. Password sign-in still works without
+# them, so a missing pair disables the Google button rather than stopping the app.
+GOOGLE_SIGN_IN_ENABLED = bool(GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET)

@@ -6,11 +6,36 @@ from app import auth, config
 from app.database import PRIMARY_PROPERTY_ID, get_connection
 from app.models import CheckInRequest, LoginRequest
 from app.sessions import active_hunt_count, is_hunt_overdue, session_boundary
+import httpx
+from authlib.common.errors import AuthlibBaseError
+from authlib.integrations.starlette_client import OAuth
 from fastapi import Depends, FastAPI, HTTPException, Request, Response
 from fastapi.responses import FileResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
+from starlette.middleware.sessions import SessionMiddleware
 
 app = FastAPI()
+
+# Authlib keeps the one-use OAuth state here between sending a member to Google
+# and catching them coming back. Separate from the sign-in cookie, and empty
+# once the round trip finishes.
+app.add_middleware(
+    SessionMiddleware,
+    secret_key=config.JWT_SECRET,
+    same_site="lax",
+    https_only=config.SESSION_COOKIE_SECURE,
+)
+
+oauth = OAuth()
+
+if config.GOOGLE_SIGN_IN_ENABLED:
+    oauth.register(
+        name="google",
+        client_id=config.GOOGLE_CLIENT_ID,
+        client_secret=config.GOOGLE_CLIENT_SECRET,
+        server_metadata_url=config.GOOGLE_DISCOVERY_URL,
+        client_kwargs={"scope": "openid email profile"},
+    )
 
 
 # --- Handlers and helpers -------------------------------------------------------------
@@ -119,6 +144,69 @@ def read_current_member(member=Depends(auth.require_api_member)):
 def logout(response: Response):
     auth.clear_session_cookie(response)
     return {"signed_out": True}
+
+
+# Sends the member to Google. Google returns them to the callback below.
+@app.get("/api/auth/google/login", include_in_schema=False)
+async def google_login(request: Request):
+    if not config.GOOGLE_SIGN_IN_ENABLED:
+        return RedirectResponse(f"{config.LOGIN_PATH}?error=google_unavailable", 303)
+
+    return await oauth.google.authorize_redirect(
+        request, config.GOOGLE_REDIRECT_URI
+    )
+
+
+# Google sends the member back here. Every failure returns to the login page
+# with a short code rather than an error body, because a person is looking at
+# this, not JavaScript.
+@app.get("/api/auth/google/callback", include_in_schema=False)
+async def google_callback(request: Request):
+    if not config.GOOGLE_SIGN_IN_ENABLED:
+        return RedirectResponse(f"{config.LOGIN_PATH}?error=google_unavailable", 303)
+
+    try:
+        token = await oauth.google.authorize_access_token(request)
+    # AuthlibBaseError covers a denied consent screen, a stale state, a replayed
+    # code, and a token that fails its signature check; httpx covers Google being
+    # unreachable. Either way a person sees the login page, not a 500.
+    except (AuthlibBaseError, httpx.HTTPError):
+        return RedirectResponse(f"{config.LOGIN_PATH}?error=google_failed", 303)
+
+    claims = token.get("userinfo") or {}
+    now = utc_now()
+
+    conn = get_connection()
+    try:
+        member = auth.member_for_google_claims(
+            conn,
+            claims.get("sub"),
+            claims.get("email"),
+            bool(claims.get("email_verified")),
+        )
+
+        # Google confirming who someone is does not make them a member. Being
+        # on the club's list does.
+        if member is None:
+            conn.rollback()
+            return RedirectResponse(f"{config.LOGIN_PATH}?error=not_a_member", 303)
+
+        conn.execute(
+            "UPDATE members SET last_login_at = ? WHERE id = ?",
+            (now.isoformat(), member["id"]),
+        )
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        conn.close()
+
+    response = RedirectResponse("/", status_code=303)
+    auth.set_session_cookie(
+        response, auth.create_session_token(member["id"], now=now)
+    )
+    return response
 
 
 # --- App API endpoints ----------------------------------------------------------------

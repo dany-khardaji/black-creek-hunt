@@ -176,3 +176,47 @@ def require_page_member(request: Request):
         raise RedirectToLogin()
 
     return member
+
+
+def find_member_by_google_sub(conn, google_sub):
+    return conn.execute(
+        "SELECT * FROM members WHERE google_sub = ?",
+        (google_sub,),
+    ).fetchone()
+
+
+def link_google_account(conn, member_id, google_sub):
+    conn.execute(
+        "UPDATE members SET google_sub = ? WHERE id = ?",
+        (google_sub, member_id),
+    )
+
+
+# Finds the member behind a Google sign-in, or None if they are not in the club.
+# Google proving who someone is does not make them a member; the allowlist does.
+def member_for_google_claims(conn, google_sub, email, email_verified):
+    if not google_sub:
+        return None
+
+    # Matched on Google's subject id, which never changes. An address can be
+    # reassigned; the id cannot, so it is checked first and on its own.
+    member = find_member_by_google_sub(conn, google_sub)
+    if member is not None:
+        return member
+
+    # First Google sign-in for an existing password account. The email is only
+    # trusted when Google says it verified it, or an unverified address could
+    # claim someone else's account.
+    if not email_verified:
+        return None
+
+    member = find_member_by_email(conn, email)
+    if member is None:
+        return None
+
+    # A member already tied to a different Google account is never relinked.
+    if member["google_sub"]:
+        return None
+
+    link_google_account(conn, member["id"], google_sub)
+    return find_member_by_google_sub(conn, google_sub)
