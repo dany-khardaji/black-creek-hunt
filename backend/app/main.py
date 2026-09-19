@@ -12,6 +12,8 @@ from authlib.integrations.starlette_client import OAuth
 from fastapi import Depends, FastAPI, HTTPException, Request, Response
 from fastapi.responses import FileResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
+from sqlalchemy import bindparam, text
+from starlette.concurrency import run_in_threadpool
 from starlette.middleware.sessions import SessionMiddleware
 
 app = FastAPI()
@@ -82,6 +84,36 @@ def utc_now():
     return datetime.now(timezone.utc)
 
 
+def complete_google_sign_in(claims, now):
+    """Match and update a Google member using the synchronous database driver."""
+    conn = get_connection()
+    try:
+        member = auth.member_for_google_claims(
+            conn,
+            claims.get("sub"),
+            claims.get("email"),
+            bool(claims.get("email_verified")),
+        )
+
+        # Google confirming who someone is does not make them a member. Being
+        # on the club's list does.
+        if member is None:
+            conn.rollback()
+            return None
+
+        conn.execute(
+            text("UPDATE members SET last_login_at = :now WHERE id = :id"),
+            {"now": now.isoformat(), "id": member["id"]},
+        )
+        conn.commit()
+        return member
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        conn.close()
+
+
 # --- Authentication endpoints ---------------------------------------------------------
 @app.post("/api/auth/login")
 def login(payload: LoginRequest, response: Response):
@@ -108,8 +140,8 @@ def login(payload: LoginRequest, response: Response):
             )
 
         cursor = conn.execute(
-            "UPDATE members SET last_login_at = ? WHERE id = ?",
-            (now.isoformat(), member["id"]),
+            text("UPDATE members SET last_login_at = :now WHERE id = :id"),
+            {"now": now.isoformat(), "id": member["id"]},
         )
 
         # Nothing updated means the member was removed since the lookup a moment
@@ -176,31 +208,12 @@ async def google_callback(request: Request):
     claims = token.get("userinfo") or {}
     now = utc_now()
 
-    conn = get_connection()
-    try:
-        member = auth.member_for_google_claims(
-            conn,
-            claims.get("sub"),
-            claims.get("email"),
-            bool(claims.get("email_verified")),
-        )
-
-        # Google confirming who someone is does not make them a member. Being
-        # on the club's list does.
-        if member is None:
-            conn.rollback()
-            return RedirectResponse(f"{config.LOGIN_PATH}?error=not_a_member", 303)
-
-        conn.execute(
-            "UPDATE members SET last_login_at = ? WHERE id = ?",
-            (now.isoformat(), member["id"]),
-        )
-        conn.commit()
-    except Exception:
-        conn.rollback()
-        raise
-    finally:
-        conn.close()
+    # The callback itself must stay async while waiting on Google. Its database
+    # driver is synchronous, so that part runs in a worker thread instead of
+    # pausing every other request handled by this process.
+    member = await run_in_threadpool(complete_google_sign_in, claims, now)
+    if member is None:
+        return RedirectResponse(f"{config.LOGIN_PATH}?error=not_a_member", 303)
 
     response = RedirectResponse("/", status_code=303)
     auth.set_session_cookie(
@@ -214,14 +227,21 @@ async def google_callback(request: Request):
 def list_properties(member=Depends(auth.require_api_member)):
     conn = get_connection()
     try:
-        return conn.execute(
-            """
-            SELECT id, slug, name, description, center_lat, center_lng, default_zoom
-            FROM properties
-            WHERE is_active = 1
-            ORDER BY name
-            """
-        ).fetchall()
+        return (
+            conn.execute(
+                text(
+                    """
+                    SELECT id, slug, name, description, center_lat, center_lng,
+                           default_zoom
+                    FROM properties
+                    WHERE is_active
+                    ORDER BY name
+                    """
+                )
+            )
+            .mappings()
+            .fetchall()
+        )
     finally:
         conn.close()
 
@@ -231,14 +251,21 @@ def list_properties(member=Depends(auth.require_api_member)):
 def get_property(slug: str, member=Depends(auth.require_api_member)):
     conn = get_connection()
     try:
-        row = conn.execute(
-            """
-            SELECT id, slug, name, description, center_lat, center_lng, default_zoom
-            FROM properties
-            WHERE slug = ? AND is_active = 1
-            """,
-            (slug,),
-        ).fetchone()
+        row = (
+            conn.execute(
+                text(
+                    """
+                    SELECT id, slug, name, description, center_lat, center_lng,
+                           default_zoom
+                    FROM properties
+                    WHERE slug = :slug AND is_active
+                    """
+                ),
+                {"slug": slug},
+            )
+            .mappings()
+            .fetchone()
+        )
 
         if row is None:
             raise HTTPException(
@@ -261,13 +288,15 @@ def get_live_count(member=Depends(auth.require_api_member)):
 
     try:
         live_count = conn.execute(
-            """
-            SELECT COUNT(*) FROM hunts
-            WHERE checked_out_at IS NULL
-            AND checked_in_at > ?
-            """,
-            (boundary,),
-        ).fetchone()[0]
+            text(
+                """
+                SELECT COUNT(*) FROM hunts
+                WHERE checked_out_at IS NULL
+                AND checked_in_at > :boundary
+                """
+            ),
+            {"boundary": boundary},
+        ).scalar()
         return {"live_count": live_count}
     finally:
         conn.close()
@@ -284,14 +313,20 @@ def check_in(request: CheckInRequest, member=Depends(auth.require_api_member)):
     requested_ids = sorted(requested_seats)
 
     try:
-        # SQLite grants one writer the lock before any occupancy checks run.
-        conn.execute("BEGIN IMMEDIATE")
-
-        placeholders = ", ".join("?" for _ in requested_ids)
-        rows = conn.execute(
-            f"SELECT * FROM stands WHERE id IN ({placeholders}) ORDER BY id",
-            requested_ids,
-        ).fetchall()
+        # FOR UPDATE holds these stand rows until the transaction ends, so a
+        # second check-in for the same stands waits here and then sees this
+        # one's rows. Ids are sorted so two requests always lock in the same
+        # order and can never each wait on the other.
+        rows = (
+            conn.execute(
+                text(
+                    "SELECT * FROM stands WHERE id IN :ids ORDER BY id FOR UPDATE"
+                ).bindparams(bindparam("ids", expanding=True)),
+                {"ids": requested_ids},
+            )
+            .mappings()
+            .fetchall()
+        )
         stands_by_id = {stand["id"]: stand for stand in rows}
 
         # A hunt happens on one property: a host cannot seat a guest elsewhere.
@@ -353,29 +388,44 @@ def check_in(request: CheckInRequest, member=Depends(auth.require_api_member)):
                     detail=detail,
                 )
 
-        host_cursor = conn.execute(
-            "INSERT INTO hunts (stand_id, member_id, checked_in_at) VALUES (?, ?, ?)",
-            (request.stand_id, member["id"], now.isoformat()),
-        )
-        host_hunt_id = host_cursor.lastrowid
+        # postgres has no lastrowid, so the new id is read back with RETURNING
+        host_hunt_id = conn.execute(
+            text(
+                """
+                INSERT INTO hunts (stand_id, member_id, checked_in_at)
+                VALUES (:stand_id, :member_id, :checked_in_at)
+                RETURNING id
+                """
+            ),
+            {
+                "stand_id": request.stand_id,
+                "member_id": member["id"],
+                "checked_in_at": now.isoformat(),
+            },
+        ).scalar()
 
         for guest in request.guests:
             conn.execute(
-                """
-                INSERT INTO hunts (
-                    stand_id, member_id, host_hunt_id, checked_in_at,
-                    guest_name, guest_phone
-                )
-                VALUES (?, ?, ?, ?, ?, ?)
-                """,
-                (
-                    guest.stand_id,
-                    member["id"],
-                    host_hunt_id,
-                    now.isoformat(),
-                    guest.name,
-                    guest.phone,
+                text(
+                    """
+                    INSERT INTO hunts (
+                        stand_id, member_id, host_hunt_id, checked_in_at,
+                        guest_name, guest_phone
+                    )
+                    VALUES (
+                        :stand_id, :member_id, :host_hunt_id, :checked_in_at,
+                        :guest_name, :guest_phone
+                    )
+                    """
                 ),
+                {
+                    "stand_id": guest.stand_id,
+                    "member_id": member["id"],
+                    "host_hunt_id": host_hunt_id,
+                    "checked_in_at": now.isoformat(),
+                    "guest_name": guest.name,
+                    "guest_phone": guest.phone,
+                },
             )
 
         conn.commit()
@@ -397,8 +447,16 @@ def check_out(hunt_id: int, member=Depends(auth.require_api_member)):
     now = utc_now()
 
     try:
-        conn.execute("BEGIN IMMEDIATE")
-        hunt = conn.execute("SELECT * FROM hunts WHERE id = ?", (hunt_id,)).fetchone()
+        # FOR UPDATE holds this hunt row so two checkouts of the same hunt
+        # cannot both pass the checks below.
+        hunt = (
+            conn.execute(
+                text("SELECT * FROM hunts WHERE id = :id FOR UPDATE"),
+                {"id": hunt_id},
+            )
+            .mappings()
+            .fetchone()
+        )
 
         if hunt is None:
             raise HTTPException(
@@ -440,12 +498,14 @@ def check_out(hunt_id: int, member=Depends(auth.require_api_member)):
 
         checked_out_at = now.isoformat()
         conn.execute(
-            """
-            UPDATE hunts
-            SET checked_out_at = ?, checkout_source = 'member'
-            WHERE id = ? OR host_hunt_id = ?
-            """,
-            (checked_out_at, hunt_id, hunt_id),
+            text(
+                """
+                UPDATE hunts
+                SET checked_out_at = :checked_out_at, checkout_source = 'member'
+                WHERE id = :id OR host_hunt_id = :id
+                """
+            ),
+            {"checked_out_at": checked_out_at, "id": hunt_id},
         )
         conn.commit()
         return {"status": "checked out", "checked_out_at": checked_out_at}
@@ -467,10 +527,14 @@ def get_map_state(property: str=PRIMARY_PROPERTY_ID, member=Depends(auth.require
     boundary = session_boundary(now).isoformat()
 
     try:
-        property_row = conn.execute(
-            "SELECT id FROM properties WHERE slug = ? AND is_active = 1",
-            (property,),
-        ).fetchone()
+        property_row = (
+            conn.execute(
+                text("SELECT id FROM properties WHERE slug = :slug AND is_active"),
+                {"slug": property},
+            )
+            .mappings()
+            .fetchone()
+        )
         # An unknown property name is refused rather than quietly showing the
         # main one, which would put the wrong stands and locations on the map.
         if property_row is None:
@@ -483,32 +547,44 @@ def get_map_state(property: str=PRIMARY_PROPERTY_ID, member=Depends(auth.require
             )
         property_id = property_row["id"]
 
-        stands = conn.execute(
-            """
-            SELECT * FROM stands
-            WHERE is_retired = 0 AND property_id = ?
-            ORDER BY name
-            """,
-            (property_id,),
-        ).fetchall()
+        stands = (
+            conn.execute(
+                text(
+                    """
+                    SELECT * FROM stands
+                    WHERE NOT is_retired AND property_id = :property_id
+                    ORDER BY name
+                    """
+                ),
+                {"property_id": property_id},
+            )
+            .mappings()
+            .fetchall()
+        )
         stand_states = []
 
         for stand in stands:
-            active_hunts = conn.execute(
-                """
-                SELECT hunts.*, members.first_name, members.last_name
-                FROM hunts
-                LEFT JOIN members ON members.id = hunts.member_id
-                WHERE hunts.stand_id = ?
-                AND hunts.checked_out_at IS NULL
-                AND hunts.checked_in_at > ?
-                ORDER BY
-                    CASE WHEN hunts.guest_name IS NULL THEN 0 ELSE 1 END,
-                    hunts.checked_in_at,
-                    hunts.id
-                """,
-                (stand["id"], boundary),
-            ).fetchall()
+            active_hunts = (
+                conn.execute(
+                    text(
+                        """
+                        SELECT hunts.*, members.first_name, members.last_name
+                        FROM hunts
+                        LEFT JOIN members ON members.id = hunts.member_id
+                        WHERE hunts.stand_id = :stand_id
+                        AND hunts.checked_out_at IS NULL
+                        AND hunts.checked_in_at > :boundary
+                        ORDER BY
+                            CASE WHEN hunts.guest_name IS NULL THEN 0 ELSE 1 END,
+                            hunts.checked_in_at,
+                            hunts.id
+                        """
+                    ),
+                    {"stand_id": stand["id"], "boundary": boundary},
+                )
+                .mappings()
+                .fetchall()
+            )
 
             if not active_hunts:
                 stand_states.append(
@@ -592,20 +668,27 @@ def get_map_state(property: str=PRIMARY_PROPERTY_ID, member=Depends(auth.require
                 }
             )
 
-        features = conn.execute(
-            "SELECT * FROM map_features WHERE property_id = ?", (property_id,)
-        ).fetchall()
+        features = (
+            conn.execute(
+                text("SELECT * FROM map_features WHERE property_id = :property_id"),
+                {"property_id": property_id},
+            )
+            .mappings()
+            .fetchall()
+        )
         # Scoped to this property: the map shows who is out here, not club-wide.
         live_count = conn.execute(
-            """
-            SELECT COUNT(*) FROM hunts
-            JOIN stands ON stands.id = hunts.stand_id
-            WHERE hunts.checked_out_at IS NULL
-            AND hunts.checked_in_at > ?
-            AND stands.property_id = ?
-            """,
-            (boundary, property_id),
-        ).fetchone()[0]
+            text(
+                """
+                SELECT COUNT(*) FROM hunts
+                JOIN stands ON stands.id = hunts.stand_id
+                WHERE hunts.checked_out_at IS NULL
+                AND hunts.checked_in_at > :boundary
+                AND stands.property_id = :property_id
+                """
+            ),
+            {"boundary": boundary, "property_id": property_id},
+        ).scalar()
 
         return {
             "stands": stand_states,

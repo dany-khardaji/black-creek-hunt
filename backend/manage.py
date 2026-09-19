@@ -7,6 +7,7 @@ from datetime import datetime, timezone
 from uuid import uuid4
 
 from app import auth
+from sqlalchemy import text
 from app.database import get_connection, init_db
 
 
@@ -47,23 +48,28 @@ def create_member(args):
         password_hash = auth.hash_password(prompt_password())
 
         conn.execute(
-            """
-            INSERT INTO members (
-                id, email, password_hash, is_admin, first_name, last_name,
-                created_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?)
-            """,
-            (
+            text(
+                """
+                INSERT INTO members (
+                    id, email, password_hash, is_admin, first_name, last_name,
+                    created_at
+                ) VALUES (
+                    :id, :email, :password_hash, :is_admin, :first_name,
+                    :last_name, :created_at
+                )
+                """
+            ),
+            {
                 # Random rather than member-2, member-3: that pattern belongs to
                 # the test fixtures and would collide with them.
-                uuid4().hex,
-                email,
-                password_hash,
-                int(args.admin),
-                args.first_name,
-                args.last_name,
-                datetime.now(timezone.utc).isoformat(),
-            ),
+                "id": uuid4().hex,
+                "email": email,
+                "password_hash": password_hash,
+                "is_admin": bool(args.admin),
+                "first_name": args.first_name,
+                "last_name": args.last_name,
+                "created_at": datetime.now(timezone.utc).isoformat(),
+            },
         )
         conn.commit()
     finally:
@@ -88,8 +94,8 @@ def reset_password(args):
         # google_sub is left alone on purpose: one person may sign in with both
         # a password and Google, and clearing it would break the Google half.
         conn.execute(
-            "UPDATE members SET password_hash = ? WHERE id = ?",
-            (password_hash, member["id"]),
+            text("UPDATE members SET password_hash = :password_hash WHERE id = :id"),
+            {"password_hash": password_hash, "id": member["id"]},
         )
         conn.commit()
     finally:

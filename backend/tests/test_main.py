@@ -1,14 +1,9 @@
-import sqlite3
 import threading
 from datetime import datetime, timedelta, timezone
 
 import app.main as main_module  # The module holding get_connection, so we can swap it out
 import pytest
 from app import auth, config
-from app.database import (  # CREATE TABLE statements, so test DBs match production
-    SCHEMA,
-    migrate_members_for_auth,
-)
 from app.main import app  # The actual FastAPI app we're testing
 
 # Shared database fixtures and seed helpers. conftest.py is loaded by pytest
@@ -16,14 +11,14 @@ from app.main import app  # The actual FastAPI app we're testing
 from conftest import (
     DEFAULT_MEMBER_ID,
     authed_client,
-    build_connection,
-    inspect_file_db,
     seed_hunt,
     seed_member,
     seed_primary_property,
     seed_stand,
 )
 from fastapi.testclient import TestClient  # Lets us send fake HTTP requests to that app
+from sqlalchemy import text
+from sqlalchemy.exc import IntegrityError
 
 
 # Retired stand should be rejected with 409
@@ -55,10 +50,10 @@ def test_checkin_succeeds_after_checkout(conn, client):
 
 
 # Two people check in at once, only one should win
-def test_concurrent_checkin_only_one_wins(file_db):
-    setup = build_connection(file_db)
-    seed_stand(setup, "test-stand-1")
-    setup.close()
+def test_concurrent_checkin_only_one_wins(committed_db):
+    with committed_db.connect() as setup:
+        seed_member(setup, DEFAULT_MEMBER_ID)
+        seed_stand(setup, "test-stand-1")
 
     # shared list both threads report their result into
     results = []
@@ -141,22 +136,9 @@ def test_client_supports_multiple_database_requests(client):
 
 
 # Checking out an already-closed hunt should be rejected with 409.
-# Uses a file so each request reopens its own connection, as production does.
-def test_checkout_twice_rejected(monkeypatch, tmp_path):
-    db_path = tmp_path / "checkout_twice.db"
-    setup = build_connection(db_path)
-    seed_stand(setup, "test-stand-1")
-    hunt_id = seed_hunt(setup, "test-stand-1")
-    setup.close()
-
-    def fake_get_connection():
-        c = sqlite3.connect(db_path, check_same_thread=False)
-        c.row_factory = sqlite3.Row
-        c.execute("PRAGMA foreign_keys = ON")
-        return c
-
-    monkeypatch.setattr(main_module, "get_connection", fake_get_connection)
-    client = authed_client()
+def test_checkout_twice_rejected(conn, client):
+    seed_stand(conn, "test-stand-1")
+    hunt_id = seed_hunt(conn, "test-stand-1")
 
     first_response = client.post(f"/api/hunts/{hunt_id}/check-out")
     second_response = client.post(f"/api/hunts/{hunt_id}/check-out")
@@ -166,11 +148,8 @@ def test_checkout_twice_rejected(monkeypatch, tmp_path):
 
 
 # Second check-in attempt on an occupied stand should not touch the original row
-def test_second_checkin_does_not_overwrite_original(file_db):
-    setup = build_connection(file_db)
-    seed_stand(setup, "test-stand-1")
-    setup.close()
-    client = authed_client()
+def test_second_checkin_does_not_overwrite_original(conn, client):
+    seed_stand(conn, "test-stand-1")
 
     first = client.post("/api/hunts", json={"stand_id": "test-stand-1", "guests": []})
     second = client.post("/api/hunts", json={"stand_id": "test-stand-1", "guests": []})
@@ -179,22 +158,18 @@ def test_second_checkin_does_not_overwrite_original(file_db):
     assert second.status_code == 409
 
     # Only one row should exist, proving the original was never overwritten.
-    check = inspect_file_db(file_db)
-    rows = check.execute(
-        "SELECT * FROM hunts WHERE stand_id = ?", ("test-stand-1",)
+    rows = conn.execute(
+        text("SELECT * FROM hunts WHERE stand_id = :id"), {"id": "test-stand-1"}
     ).fetchall()
-    check.close()
     assert len(rows) == 1
 
 
 # Host with two guests should create 3 rows total
-def test_checkin_with_two_guests_creates_three_rows(file_db):
-    setup = build_connection(file_db)
+def test_checkin_with_two_guests_creates_three_rows(conn, client):
     for stand_id in ["test-stand-1", "test-stand-2", "test-stand-3"]:
-        seed_stand(setup, stand_id)
-    setup.close()
+        seed_stand(conn, stand_id)
 
-    response = authed_client().post(
+    response = client.post(
         "/api/hunts",
         json={
             "stand_id": "test-stand-1",
@@ -206,23 +181,19 @@ def test_checkin_with_two_guests_creates_three_rows(file_db):
     )
 
     assert response.status_code == 200
-    check = inspect_file_db(file_db)
-    rows = check.execute("SELECT * FROM hunts").fetchall()
-    check.close()
+    rows = conn.execute(text("SELECT * FROM hunts")).fetchall()
     assert len(rows) == 3
 
 
 # One guest's stand is already occupied: the whole submission is rejected and
 # the host's row is rolled back with it.
-def test_checkin_guest_stand_occupied_rejects_all(file_db):
-    setup = build_connection(file_db)
+def test_checkin_guest_stand_occupied_rejects_all(conn, client):
     for stand_id in ["test-stand-1", "test-stand-2"]:
-        seed_stand(setup, stand_id)
+        seed_stand(conn, stand_id)
     # The guest's stand is already occupied by someone else.
-    seed_hunt(setup, "test-stand-2", member_id="member-2")
-    setup.close()
+    seed_hunt(conn, "test-stand-2", member_id="member-2")
 
-    response = authed_client().post(
+    response = client.post(
         "/api/hunts",
         json={
             "stand_id": "test-stand-1",
@@ -235,11 +206,9 @@ def test_checkin_guest_stand_occupied_rejects_all(file_db):
     assert response.status_code == 409
 
     # The host's row must never have been written either.
-    check = inspect_file_db(file_db)
-    rows = check.execute(
-        "SELECT * FROM hunts WHERE stand_id = ?", ("test-stand-1",)
+    rows = conn.execute(
+        text("SELECT * FROM hunts WHERE stand_id = :id"), {"id": "test-stand-1"}
     ).fetchall()
-    check.close()
     assert len(rows) == 0
 
 
@@ -262,12 +231,9 @@ def test_map_state_reflects_active_checkin(conn, client):
 
 
 # Checking out the host should also close any guest rows from the same check-in
-def test_checkout_cascades_to_guests(file_db):
-    setup = build_connection(file_db)
+def test_checkout_cascades_to_guests(conn, client):
     for stand_id in ["test-stand-1", "test-stand-2"]:
-        seed_stand(setup, stand_id)
-    setup.close()
-    client = authed_client()
+        seed_stand(conn, stand_id)
 
     checkin_response = client.post(
         "/api/hunts",
@@ -284,11 +250,13 @@ def test_checkout_cascades_to_guests(file_db):
     checkout_response = client.post(f"/api/hunts/{host_hunt_id}/check-out")
 
     assert checkout_response.status_code == 200
-    check = inspect_file_db(file_db)
-    guest_row = check.execute(
-        "SELECT * FROM hunts WHERE stand_id = ?", ("test-stand-2",)
-    ).fetchone()
-    check.close()
+    guest_row = (
+        conn.execute(
+            text("SELECT * FROM hunts WHERE stand_id = :id"), {"id": "test-stand-2"}
+        )
+        .mappings()
+        .fetchone()
+    )
     assert guest_row["checked_out_at"] is not None
     assert guest_row["host_hunt_id"] == host_hunt_id
 
@@ -338,12 +306,10 @@ def test_two_guests_can_share_a_two_seat_stand(conn, client):
     assert response.status_code == 200
 
 
-def test_checkin_over_capacity_rejects_every_row(file_db):
-    setup = build_connection(file_db)
-    seed_stand(setup, "stand-1", name="Double Stand", type="box", capacity=2)
-    setup.close()
+def test_checkin_over_capacity_rejects_every_row(conn, client):
+    seed_stand(conn, "stand-1", name="Double Stand", type="box", capacity=2)
 
-    response = authed_client().post(
+    response = client.post(
         "/api/hunts",
         json={
             "stand_id": "stand-1",
@@ -366,18 +332,16 @@ def test_checkin_over_capacity_rejects_every_row(file_db):
         "available_seats": 2,
     }
 
-    check = inspect_file_db(file_db)
-    row_count = check.execute("SELECT COUNT(*) FROM hunts").fetchone()[0]
-    check.close()
+    row_count = conn.execute(text("SELECT COUNT(*) FROM hunts")).scalar()
     assert row_count == 0
 
 
-def test_concurrent_checkins_only_one_claims_final_seat(file_db):
-    setup = build_connection(file_db)
-    seed_stand(setup, "stand-1", name="Double Stand", type="box", capacity=2)
-    # One of the two seats is already taken, so only one request can win.
-    seed_hunt(setup, "stand-1", member_id="member-2")
-    setup.close()
+def test_concurrent_checkins_only_one_claims_final_seat(committed_db):
+    with committed_db.connect() as setup:
+        seed_member(setup, DEFAULT_MEMBER_ID)
+        seed_stand(setup, "stand-1", name="Double Stand", type="box", capacity=2)
+        # One of the two seats is already taken, so only one request can win.
+        seed_hunt(setup, "stand-1", member_id="member-2")
 
     results = []
 
@@ -395,11 +359,10 @@ def test_concurrent_checkins_only_one_claims_final_seat(file_db):
 
     assert results.count(200) == 1
     assert results.count(409) == 1
-    check = inspect_file_db(file_db)
-    active_count = check.execute(
-        "SELECT COUNT(*) FROM hunts WHERE checked_out_at IS NULL"
-    ).fetchone()[0]
-    check.close()
+    with committed_db.connect() as check:
+        active_count = check.execute(
+            text("SELECT COUNT(*) FROM hunts WHERE checked_out_at IS NULL")
+        ).scalar()
     assert active_count == 2
 
 
@@ -589,12 +552,21 @@ def test_map_state_rejects_unknown_property(conn, client):
 # An inactive property is refused the same way an unknown slug is.
 def test_map_state_rejects_inactive_property(conn, client):
     conn.execute(
-        """
-        INSERT INTO properties (
-            id, slug, name, center_lat, center_lng, default_zoom, is_active
-        ) VALUES (?, ?, ?, ?, ?, ?, 0)
-        """,
-        ("retired-tract", "retired-tract", "Retired Tract", 35.0, -78.0, 15),
+        text(
+            """
+            INSERT INTO properties (
+                id, slug, name, center_lat, center_lng, default_zoom, is_active
+            ) VALUES (:id, :slug, :name, :lat, :lng, :zoom, false)
+            """
+        ),
+        {
+            "id": "retired-tract",
+            "slug": "retired-tract",
+            "name": "Retired Tract",
+            "lat": 35.0,
+            "lng": -78.0,
+            "zoom": 15,
+        },
     )
     conn.commit()
 
@@ -607,25 +579,31 @@ def test_map_state_rejects_inactive_property(conn, client):
 def test_members_table_accepts_google_only_member(conn):
 
     conn.execute(
-        """
-        INSERT INTO members (
-            id, email, google_sub, first_name, last_name, created_at
-        ) VALUES (?, ?, ?, ?, ?, ?)
-        """,
-        (
-            "member-google",
-            "gale@example.com",
-            "108xyz",
-            "Gale",
-            "Ray",
-            "2026-09-15T00:00:00+00:00",
+        text(
+            """
+            INSERT INTO members (
+                id, email, google_sub, first_name, last_name, created_at
+            ) VALUES (:id, :email, :sub, :first, :last, :created)
+            """
         ),
+        {
+            "id": "member-google",
+            "email": "gale@example.com",
+            "sub": "108xyz",
+            "first": "Gale",
+            "last": "Ray",
+            "created": "2026-09-15T00:00:00+00:00",
+        },
     )
     conn.commit()
 
-    row = conn.execute(
-        "SELECT password_hash, google_sub, last_login_at FROM members"
-    ).fetchone()
+    row = (
+        conn.execute(
+            text("SELECT password_hash, google_sub, last_login_at FROM members")
+        )
+        .mappings()
+        .fetchone()
+    )
     assert row["password_hash"] is None
     assert row["google_sub"] == "108xyz"
     assert row["last_login_at"] is None
@@ -633,38 +611,38 @@ def test_members_table_accepts_google_only_member(conn):
 
 # Two members must never share one Google identity.
 def test_members_table_rejects_duplicate_google_sub(conn):
-    for member_id, email in (("m1", "one@example.com"), ("m2", "two@example.com")):
-        try:
-            conn.execute(
-                """
-                INSERT INTO members (
-                    id, email, google_sub, first_name, last_name, created_at
-                ) VALUES (?, ?, ?, ?, ?, ?)
-                """,
-                (member_id, email, "shared-sub", "A", "B", "2026-09-15T00:00:00+00:00"),
-            )
-        except sqlite3.IntegrityError:
-            assert member_id == "m2"
-            return
-    raise AssertionError("duplicate google_sub was accepted")
+    insert = text(
+        """
+        INSERT INTO members (
+            id, email, google_sub, first_name, last_name, created_at
+        ) VALUES (:id, :email, 'shared-sub', 'A', 'B', '2026-09-15T00:00:00+00:00')
+        """
+    )
+    conn.execute(insert, {"id": "m1", "email": "one@example.com"})
+    conn.commit()
+
+    with pytest.raises(IntegrityError):
+        conn.execute(insert, {"id": "m2", "email": "two@example.com"})
 
 
 # Password-only members all leave google_sub NULL; that must not collide.
 def test_members_table_allows_many_null_google_subs(conn):
-    conn.executemany(
-        """
-        INSERT INTO members (
-            id, email, password_hash, first_name, last_name, created_at
-        ) VALUES (?, ?, ?, ?, ?, ?)
-        """,
+    conn.execute(
+        text(
+            """
+            INSERT INTO members (
+                id, email, password_hash, first_name, last_name, created_at
+            ) VALUES (:id, :email, :hash, :first, :last, :created)
+            """
+        ),
         [
-            ("m1", "one@example.com", "hash-1", "A", "B", "2026-09-15T00:00:00+00:00"),
-            ("m2", "two@example.com", "hash-2", "C", "D", "2026-09-15T00:00:00+00:00"),
+            {"id": "m1", "email": "one@example.com", "hash": "hash-1", "first": "A", "last": "B", "created": "2026-09-15T00:00:00+00:00"},
+            {"id": "m2", "email": "two@example.com", "hash": "hash-2", "first": "C", "last": "D", "created": "2026-09-15T00:00:00+00:00"},
         ],
     )
     conn.commit()
 
-    assert conn.execute("SELECT COUNT(*) FROM members").fetchone()[0] == 2
+    assert conn.execute(text("SELECT COUNT(*) FROM members")).scalar() == 2
 
 
 # The retired endpoints exposed every property's coordinates without auth.
@@ -672,191 +650,6 @@ def test_removed_unscoped_endpoints_are_gone():
     client = TestClient(app)
     assert client.get("/api/stands").status_code == 404
     assert client.get("/api/map-features").status_code == 404
-
-
-# The pre-auth members table, as databases created before this slice have it.
-LEGACY_MEMBERS_SCHEMA = """
-    CREATE TABLE members (
-        id TEXT PRIMARY KEY,
-        email TEXT UNIQUE NOT NULL,
-        password_hash TEXT NOT NULL,
-        is_admin INTEGER NOT NULL DEFAULT 0 CHECK (is_admin IN (0, 1)),
-        first_name TEXT NOT NULL,
-        last_name TEXT NOT NULL,
-        created_at TEXT NOT NULL
-    );
-"""
-
-
-def legacy_members_connection(tmp_path):
-    """A database whose members table predates Google sign-in."""
-    conn = sqlite3.connect(tmp_path / "legacy.db")
-    conn.row_factory = sqlite3.Row
-    conn.executescript(
-        SCHEMA.replace(
-            "CREATE TABLE IF NOT EXISTS members",
-            "CREATE TABLE IF NOT EXISTS members_unused",
-        )
-    )
-    conn.executescript("DROP TABLE IF EXISTS members_unused;" + LEGACY_MEMBERS_SCHEMA)
-    seed_primary_property(conn)
-    conn.execute(
-        """
-        INSERT INTO members (
-            id, email, password_hash, is_admin, first_name, last_name, created_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?)
-        """,
-        (
-            "member-1",
-            "Mike@Example.com",
-            "argon2-hash",
-            1,
-            "Mike",
-            "Doe",
-            "2026-01-01T00:00:00+00:00",
-        ),
-    )
-    conn.execute(
-        "INSERT INTO stands (id, name, type, lat, lng) VALUES (?, ?, ?, ?, ?)",
-        ("stand-1", "Creek Stand", "ladder", 35.0, -78.0),
-    )
-    conn.execute(
-        "INSERT INTO hunts (stand_id, member_id, checked_in_at) VALUES (?, ?, ?)",
-        ("stand-1", "member-1", "2026-01-01T12:00:00+00:00"),
-    )
-    conn.commit()
-    return conn
-
-
-# Rebuilding members must not disturb the hunts that reference it.
-def test_migration_preserves_members_and_hunts(tmp_path):
-    conn = legacy_members_connection(tmp_path)
-    conn.execute("PRAGMA foreign_keys = ON")
-
-    migrate_members_for_auth(conn)
-
-    member = conn.execute("SELECT * FROM members").fetchone()
-    assert member["id"] == "member-1"
-    assert member["password_hash"] == "argon2-hash"
-    assert member["is_admin"] == 1
-    assert member["first_name"] == "Mike"
-    assert conn.execute("SELECT COUNT(*) FROM hunts").fetchone()[0] == 1
-    # The rebuild must not orphan the hunts pointing at the old table.
-    assert conn.execute("PRAGMA foreign_key_check(hunts)").fetchall() == []
-    # Enforcement is turned off for the rebuild and must be restored.
-    assert conn.execute("PRAGMA foreign_keys").fetchone()[0] == 1
-
-
-# Existing mixed-case emails are normalized so the allowlist match is reliable.
-def test_migration_lowercases_existing_emails(tmp_path):
-    conn = legacy_members_connection(tmp_path)
-
-    migrate_members_for_auth(conn)
-
-    assert conn.execute("SELECT email FROM members").fetchone()[0] == "mike@example.com"
-
-
-# After migrating, the column accepts the Google-only member it exists for.
-def test_migration_allows_google_member_afterwards(tmp_path):
-    conn = legacy_members_connection(tmp_path)
-
-    migrate_members_for_auth(conn)
-    conn.execute(
-        """
-        INSERT INTO members (
-            id, email, google_sub, first_name, last_name, created_at
-        ) VALUES (?, ?, ?, ?, ?, ?)
-        """,
-        (
-            "m2",
-            "gale@example.com",
-            "108xyz",
-            "Gale",
-            "Ray",
-            "2026-09-15T00:00:00+00:00",
-        ),
-    )
-    conn.commit()
-
-    assert conn.execute("SELECT COUNT(*) FROM members").fetchone()[0] == 2
-
-
-# get_connection runs this on every connection, so repeats must be free.
-def test_migration_is_idempotent(tmp_path):
-    conn = legacy_members_connection(tmp_path)
-
-    migrate_members_for_auth(conn)
-    migrate_members_for_auth(conn)
-    migrate_members_for_auth(conn)
-
-    assert conn.execute("SELECT COUNT(*) FROM members").fetchone()[0] == 1
-    assert conn.execute("SELECT COUNT(*) FROM hunts").fetchone()[0] == 1
-
-
-# A database already carrying the current shape is left untouched.
-def test_migration_skips_current_schema():
-    conn = sqlite3.connect(":memory:", check_same_thread=False)
-    conn.row_factory = sqlite3.Row
-    conn.executescript(SCHEMA)
-
-    migrate_members_for_auth(conn)
-
-    names = {
-        row["name"] for row in conn.execute("PRAGMA table_info(members)").fetchall()
-    }
-    assert "google_sub" in names
-    assert "members_migrated" not in {
-        row[0]
-        for row in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")
-    }
-
-
-# An older members table gains the missing last-login column without being
-# rebuilt, which would put the stored Google details at risk.
-def test_migration_adds_missing_last_login_without_losing_google_sub():
-    conn = sqlite3.connect(":memory:")
-    conn.row_factory = sqlite3.Row
-    conn.execute(
-        """
-        CREATE TABLE members (
-            id TEXT PRIMARY KEY,
-            email TEXT UNIQUE NOT NULL,
-            password_hash TEXT,
-            google_sub TEXT UNIQUE,
-            is_admin INTEGER NOT NULL DEFAULT 0,
-            first_name TEXT NOT NULL,
-            last_name TEXT NOT NULL,
-            created_at TEXT NOT NULL
-        )
-        """
-    )
-    conn.execute(
-        """
-        INSERT INTO members (
-            id, email, google_sub, first_name, last_name, created_at
-        ) VALUES (?, ?, ?, ?, ?, ?)
-        """,
-        (
-            "member-1",
-            "mike@example.com",
-            "google-sub-1",
-            "Mike",
-            "Doe",
-            "2026-01-01T00:00:00+00:00",
-        ),
-    )
-    conn.commit()
-
-    # Runs on every connection, so a second pass must be a no-op.
-    migrate_members_for_auth(conn)
-    migrate_members_for_auth(conn)
-
-    columns = {row["name"] for row in conn.execute("PRAGMA table_info(members)")}
-    member = conn.execute("SELECT google_sub, last_login_at FROM members").fetchone()
-
-    assert "last_login_at" in columns
-    assert member["google_sub"] == "google-sub-1"
-    assert member["last_login_at"] is None
 
 
 # --- Authentication routes ---
@@ -966,9 +759,13 @@ def test_login_records_the_time(anonymous_client, conn):
         json={"email": "nine@example.com", "password": "swamp-oak-42"},
     )
 
-    row = conn.execute(
-        "SELECT last_login_at FROM members WHERE id = ?", ("member-9",)
-    ).fetchone()
+    row = (
+        conn.execute(
+            text("SELECT last_login_at FROM members WHERE id = :id"), {"id": "member-9"}
+        )
+        .mappings()
+        .fetchone()
+    )
     assert row["last_login_at"] is not None
 
 
@@ -981,9 +778,13 @@ def test_failed_login_records_nothing(anonymous_client, conn):
         json={"email": "nine@example.com", "password": "not-the-password"},
     )
 
-    row = conn.execute(
-        "SELECT last_login_at FROM members WHERE id = ?", ("member-9",)
-    ).fetchone()
+    row = (
+        conn.execute(
+            text("SELECT last_login_at FROM members WHERE id = :id"), {"id": "member-9"}
+        )
+        .mappings()
+        .fetchone()
+    )
     assert row["last_login_at"] is None
 
 
@@ -1077,14 +878,12 @@ def test_a_broken_stored_hash_still_checks_a_password(
 
 # --- Identity and authorization ---------------------------------------------
 # the hunt records whoever was signed in, not one hardcoded member. This is the guard against a fixed identity creeping back in.
-def test_check_in_records_the_signed_in_member(file_db):
-    setup = build_connection(file_db)
-    seed_stand(setup, "stand-1")
-    seed_stand(setup, "stand-2")
-    seed_member(setup, "member-2", first_name="Sara")
-    setup.close()
+def test_check_in_records_the_signed_in_member(conn, client):
+    seed_stand(conn, "stand-1")
+    seed_stand(conn, "stand-2")
+    seed_member(conn, "member-2", first_name="Sara")
 
-    first = authed_client().post(
+    first = client.post(
         "/api/hunts", json={"stand_id": "stand-1", "guests": []}
     )
     second = authed_client("member-2").post(
@@ -1094,11 +893,9 @@ def test_check_in_records_the_signed_in_member(file_db):
     assert first.status_code == 200
     assert second.status_code == 200
 
-    check = inspect_file_db(file_db)
     owners = dict(
-        check.execute("SELECT stand_id, member_id FROM hunts").fetchall()
+        conn.execute(text("SELECT stand_id, member_id FROM hunts")).fetchall()
     )
-    check.close()
 
     assert owners["stand-1"] == DEFAULT_MEMBER_ID
     assert owners["stand-2"] == "member-2"

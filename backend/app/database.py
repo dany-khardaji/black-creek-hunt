@@ -1,223 +1,143 @@
-import sqlite3
-from pathlib import Path
+import os
 
-DB_PATH = (
-    Path(__file__).parent.parent / "blackcreek.db"
-)  # Points at backend/blackcreek.db no matter where you run
+from sqlalchemy import (
+    Boolean,
+    CheckConstraint,
+    Column,
+    Float,
+    ForeignKey,
+    Integer,
+    MetaData,
+    Table,
+    Text,
+    create_engine,
+)
 
 # Stands and features with no property named are treated as this one.
 PRIMARY_PROPERTY_ID = "black-creek"
 
-# Table structure for the whole app
-SCHEMA = f"""
-    CREATE TABLE IF NOT EXISTS properties (
-        id TEXT PRIMARY KEY,
-        slug TEXT UNIQUE NOT NULL,
-        name TEXT NOT NULL,
-        description TEXT,
-        center_lat REAL NOT NULL,
-        center_lng REAL NOT NULL,
-        default_zoom INTEGER NOT NULL DEFAULT 15,
-        is_active INTEGER NOT NULL DEFAULT 1 CHECK (is_active IN (0, 1))
-    );
+metadata = MetaData()
 
-    CREATE TABLE IF NOT EXISTS stands (
-        id TEXT PRIMARY KEY,
-        name TEXT NOT NULL,
-        type TEXT NOT NULL,
-        lat REAL NOT NULL,
-        lng REAL NOT NULL,
-        capacity INTEGER NOT NULL DEFAULT 1,
-        preferred_winds TEXT,
-        is_retired INTEGER NOT NULL DEFAULT 0 CHECK (is_retired IN (0, 1)),
-        property_id TEXT NOT NULL DEFAULT '{PRIMARY_PROPERTY_ID}'
-            REFERENCES properties(id)
-    );
+properties = Table(
+    "properties",
+    metadata,
+    Column("id", Text, primary_key=True),
+    Column("slug", Text, unique=True, nullable=False),
+    Column("name", Text, nullable=False),
+    Column("description", Text),
+    Column("center_lat", Float, nullable=False),
+    Column("center_lng", Float, nullable=False),
+    Column("default_zoom", Integer, nullable=False, server_default="15"),
+    Column("is_active", Boolean, nullable=False, server_default="true"),
+)
 
-    CREATE TABLE IF NOT EXISTS map_features (
-        id TEXT PRIMARY KEY,
-        name TEXT NOT NULL,
-        type TEXT NOT NULL,
-        lat REAL NOT NULL,
-        lng REAL NOT NULL,
-        property_id TEXT NOT NULL DEFAULT '{PRIMARY_PROPERTY_ID}'
-            REFERENCES properties(id)
-    );
+stands = Table(
+    "stands",
+    metadata,
+    Column("id", Text, primary_key=True),
+    Column("name", Text, nullable=False),
+    Column("type", Text, nullable=False),
+    Column("lat", Float, nullable=False),
+    Column("lng", Float, nullable=False),
+    Column("capacity", Integer, nullable=False, server_default="1"),
+    Column("preferred_winds", Text),
+    Column("is_retired", Boolean, nullable=False, server_default="false"),
+    Column(
+        "property_id",
+        Text,
+        ForeignKey("properties.id"),
+        nullable=False,
+        server_default=PRIMARY_PROPERTY_ID,
+    ),
+)
 
-    CREATE TABLE IF NOT EXISTS members (
-        id TEXT PRIMARY KEY,
-        email TEXT UNIQUE NOT NULL,
-        -- Null for members who only sign in with Google. A member may hold
-        -- both a password and a Google identity.
-        password_hash TEXT,
-        -- Google's stable subject claim. Never match members on email alone
-        -- after first sign-in: a Google account's email can change, the
-        -- subject cannot.
-        google_sub TEXT UNIQUE,
-        is_admin INTEGER NOT NULL DEFAULT 0 CHECK (is_admin IN (0, 1)),
-        first_name TEXT NOT NULL,
-        last_name TEXT NOT NULL,
-        created_at TEXT NOT NULL,
-        last_login_at TEXT
-    );
+map_features = Table(
+    "map_features",
+    metadata,
+    Column("id", Text, primary_key=True),
+    Column("name", Text, nullable=False),
+    Column("type", Text, nullable=False),
+    Column("lat", Float, nullable=False),
+    Column("lng", Float, nullable=False),
+    Column(
+        "property_id",
+        Text,
+        ForeignKey("properties.id"),
+        nullable=False,
+        server_default=PRIMARY_PROPERTY_ID,
+    ),
+)
 
-    CREATE TABLE IF NOT EXISTS hunts (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        stand_id TEXT NOT NULL,
-        member_id TEXT NOT NULL,
-        host_hunt_id INTEGER,
-        checked_in_at TEXT NOT NULL,
-        checked_out_at TEXT,
-        checkout_source TEXT CHECK (checkout_source IS NULL OR checkout_source IN ('auto', 'member')),
-        guest_name TEXT,
-        guest_phone TEXT,
-        FOREIGN KEY (stand_id) REFERENCES stands(id),
-        FOREIGN KEY (member_id) REFERENCES members(id),
-        FOREIGN KEY (host_hunt_id) REFERENCES hunts(id)
-    );
-"""
+members = Table(
+    "members",
+    metadata,
+    Column("id", Text, primary_key=True),
+    Column("email", Text, unique=True, nullable=False),
+    # null for members who only sign in with google; one person may hold both
+    Column("password_hash", Text),
+    # google's stable subject claim. never match on email alone after the first
+    # sign-in: a google account's email can change, the subject cannot
+    Column("google_sub", Text, unique=True),
+    Column("is_admin", Boolean, nullable=False, server_default="false"),
+    Column("first_name", Text, nullable=False),
+    Column("last_name", Text, nullable=False),
+    Column("created_at", Text, nullable=False),
+    Column("last_login_at", Text),
+)
+
+hunts = Table(
+    "hunts",
+    metadata,
+    # postgres assigns this itself, so inserts read it back with RETURNING
+    Column("id", Integer, primary_key=True, autoincrement=True),
+    Column("stand_id", Text, ForeignKey("stands.id"), nullable=False),
+    Column("member_id", Text, ForeignKey("members.id"), nullable=False),
+    Column("host_hunt_id", Integer, ForeignKey("hunts.id")),
+    Column("checked_in_at", Text, nullable=False),
+    Column("checked_out_at", Text),
+    Column("checkout_source", Text),
+    Column("guest_name", Text),
+    Column("guest_phone", Text),
+    CheckConstraint(
+        "checkout_source IS NULL OR checkout_source IN ('auto', 'member')",
+        name="ck_hunts_checkout_source",
+    ),
+)
 
 
-# Lets members exist without a password, for Google sign-in. SQLite cannot
-# change that rule on an existing table, so the table is rebuilt instead.
-def migrate_members_for_auth(conn):
-    columns = conn.execute("PRAGMA table_info(members)").fetchall()
-    if not columns:
-        return  # Fresh database: SCHEMA already has the current shape.
+# Neon hands out plain postgresql:// urls; sqlalchemy needs the driver named.
+def normalize_database_url(url):
+    if url.startswith("postgresql://"):
+        return url.replace("postgresql://", "postgresql+psycopg://", 1)
+    return url
 
-    password_hash_required = any(
-        column["name"] == "password_hash" and column["notnull"] for column in columns
-    )
-    names = {column["name"] for column in columns}
-    if not password_hash_required and "google_sub" in names:
-        if "last_login_at" not in names:
-            conn.execute("ALTER TABLE members ADD COLUMN last_login_at TEXT")
-            conn.commit()
-        return
 
-    # Hunt rows point at members, so the link is switched off while the table is
-    # swapped or the old hunts would be deleted along with it.
-    conn.commit()
-    conn.execute("PRAGMA foreign_keys = OFF")
-    try:
-        conn.execute("BEGIN")
-        conn.execute(
-            """
-            CREATE TABLE members_migrated (
-                id TEXT PRIMARY KEY,
-                email TEXT UNIQUE NOT NULL,
-                password_hash TEXT,
-                google_sub TEXT UNIQUE,
-                is_admin INTEGER NOT NULL DEFAULT 0 CHECK (is_admin IN (0, 1)),
-                first_name TEXT NOT NULL,
-                last_name TEXT NOT NULL,
-                created_at TEXT NOT NULL,
-                last_login_at TEXT
-            )
-            """
+def database_url():
+    url = os.environ.get("DATABASE_URL_POOLED") or os.environ.get("DATABASE_URL")
+    if not url:
+        raise RuntimeError(
+            "DATABASE_URL is not set. Copy the connection string from the Neon "
+            "dashboard into .env."
         )
-        # Emails are lowercased as they move over, so capital letters never
-        # stop a member matching their account.
-        conn.execute(
-            """
-            INSERT INTO members_migrated (
-                id, email, password_hash, is_admin,
-                first_name, last_name, created_at
-            )
-            SELECT id, LOWER(email), password_hash, is_admin,
-                   first_name, last_name, created_at
-            FROM members
-            """
-        )
-        conn.execute("DROP TABLE members")
-        conn.execute("ALTER TABLE members_migrated RENAME TO members")
-        conn.commit()
-    except Exception:
-        conn.rollback()
-        raise
-    finally:
-        conn.execute("PRAGMA foreign_keys = ON")
+    return normalize_database_url(url)
 
 
-# Brings an older database file up to the shape the app expects.
-def ensure_current_schema(conn):
-    migrate_members_for_auth(conn)
-
-    stand_columns = {
-        row["name"] for row in conn.execute("PRAGMA table_info(stands)").fetchall()
-    }
-    hunt_columns = {
-        row["name"] for row in conn.execute("PRAGMA table_info(hunts)").fetchall()
-    }
-
-    if stand_columns and "capacity" not in stand_columns:
-        conn.execute(
-            "ALTER TABLE stands ADD COLUMN capacity INTEGER NOT NULL DEFAULT 1"
-        )
-
-    if hunt_columns and "host_hunt_id" not in hunt_columns:
-        conn.execute(
-            "ALTER TABLE hunts ADD COLUMN host_hunt_id INTEGER REFERENCES hunts(id)"
-        )
-        conn.execute(
-            """
-            UPDATE hunts AS guest
-            SET host_hunt_id = (
-                SELECT host.id
-                FROM hunts AS host
-                WHERE host.member_id = guest.member_id
-                AND host.checked_in_at = guest.checked_in_at
-                AND host.guest_name IS NULL
-                ORDER BY host.id
-                LIMIT 1
-            )
-            WHERE guest.guest_name IS NOT NULL
-            AND guest.host_hunt_id IS NULL
-            """
-        )
-
-    if hunt_columns:
-        conn.execute(
-            "CREATE INDEX IF NOT EXISTS idx_hunts_host_hunt_id ON hunts(host_hunt_id)"
-        )
-
-    feature_columns = {
-        row["name"]
-        for row in conn.execute("PRAGMA table_info(map_features)").fetchall()
-    }
-
-    # Older stands and features are all assigned to the main property. The link
-    # back to that table is left off here because SQLite will not add one to an
-    # existing table.
-    if stand_columns and "property_id" not in stand_columns:
-        conn.execute(
-            "ALTER TABLE stands ADD COLUMN property_id TEXT NOT NULL "
-            f"DEFAULT '{PRIMARY_PROPERTY_ID}'"
-        )
-
-    if feature_columns and "property_id" not in feature_columns:
-        conn.execute(
-            "ALTER TABLE map_features ADD COLUMN property_id TEXT NOT NULL "
-            f"DEFAULT '{PRIMARY_PROPERTY_ID}'"
-        )
-
-    if stand_columns or hunt_columns or feature_columns:
-        conn.commit()
+_engine = None
 
 
-# Opens a connection to the real database file, with settings the app needs
+# One engine for the whole process. It holds the connection pool, so building a
+# second one per request would open connections Neon then refuses.
+def get_engine():
+    global _engine
+    if _engine is None:
+        _engine = create_engine(database_url(), pool_pre_ping=True, future=True)
+    return _engine
+
+
+# Callers close what they open, matching how the routes are already written.
 def get_connection():
-    conn = sqlite3.connect(DB_PATH)
-    conn.execute("PRAGMA foreign_keys = ON")
-    conn.row_factory = sqlite3.Row
-    ensure_current_schema(conn)
-    return conn
+    return get_engine().connect()
 
 
-# Creates the tables if they don't already exist
 def init_db():
-    conn = get_connection()
-    conn.executescript(SCHEMA)
-    ensure_current_schema(conn)
-    conn.commit()
-    conn.close()
+    metadata.create_all(get_engine())

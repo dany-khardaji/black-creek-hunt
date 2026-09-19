@@ -1,6 +1,8 @@
 from datetime import datetime, timedelta, timezone
 from zoneinfo import ZoneInfo
 
+from sqlalchemy import text
+
 CLUB_TZ = ZoneInfo("America/New_York")  # Clubs timezone
 RESET_HOUR = 3  # Sessions reset at 3am local time, not midnight
 OVERDUE_AFTER = timedelta(hours=8)
@@ -26,17 +28,17 @@ def session_boundary(now_utc):
 def active_hunt_count(conn, stand_id, now_utc):
     boundary = session_boundary(now_utc)
 
-    row = conn.execute(
-        """
-        SELECT COUNT(*) FROM hunts
-        WHERE stand_id = ?
-        AND checked_out_at IS NULL
-        AND checked_in_at > ?
-        """,
-        (stand_id, boundary.isoformat()),
-    ).fetchone()
-
-    return row[0]
+    return conn.execute(
+        text(
+            """
+            SELECT COUNT(*) FROM hunts
+            WHERE stand_id = :stand_id
+            AND checked_out_at IS NULL
+            AND checked_in_at > :boundary
+            """
+        ),
+        {"stand_id": stand_id, "boundary": boundary.isoformat()},
+    ).scalar()
 
 
 def is_stand_occupied(conn, stand_id, now_utc):

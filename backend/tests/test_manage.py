@@ -1,29 +1,22 @@
-import sqlite3
-
-import app.database as database_module
 import app.main as main_module
 import manage
 import pytest
 from app import auth
 from fastapi.testclient import TestClient
+from sqlalchemy import text
 
 
-# manage.py writes to the real blackcreek.db, so every test here redirects it to
-# a throwaway file first.
+# manage.py opens and commits its own connections, so it cannot join a test
+# transaction. Rows are written for real and removed afterwards.
 @pytest.fixture
-def cli_db(tmp_path, monkeypatch):
-    db_path = tmp_path / "manage.db"
-    monkeypatch.setattr(database_module, "DB_PATH", db_path)
+def cli_db(committed_db, monkeypatch):
     monkeypatch.setattr(manage.getpass, "getpass", lambda *args: "correct-horse")
-    return db_path
+    return committed_db
 
 
-def read_members(db_path):
-    conn = sqlite3.connect(db_path)
-    conn.row_factory = sqlite3.Row
-    rows = conn.execute("SELECT * FROM members").fetchall()
-    conn.close()
-    return rows
+def read_members(engine):
+    with engine.connect() as conn:
+        return conn.execute(text("SELECT * FROM members")).mappings().fetchall()
 
 
 def test_create_member_inserts_a_usable_account(cli_db):
@@ -37,7 +30,7 @@ def test_create_member_inserts_a_usable_account(cli_db):
     assert len(rows) == 1
     # Stored lowercased, so capitals typed at sign-in still match.
     assert rows[0]["email"] == "new@example.com"
-    assert rows[0]["is_admin"] == 0
+    assert rows[0]["is_admin"] is False
     assert auth.verify_password("correct-horse", rows[0]["password_hash"])
 
 
@@ -47,7 +40,7 @@ def test_admin_flag_grants_admin_rights(cli_db):
          "--last-name", "Lane", "--admin"]
     )
 
-    assert read_members(cli_db)[0]["is_admin"] == 1
+    assert read_members(cli_db)[0]["is_admin"] is True
 
 
 # member-2 style ids belong to the test fixtures; a real account must not
@@ -114,10 +107,9 @@ def test_reset_password_leaves_google_sub_alone(cli_db):
         ["create-member", "--email", "both@example.com", "--first-name", "A",
          "--last-name", "B"]
     )
-    conn = sqlite3.connect(cli_db)
-    conn.execute("UPDATE members SET google_sub = ?", ("google-123",))
-    conn.commit()
-    conn.close()
+    with cli_db.connect() as conn:
+        conn.execute(text("UPDATE members SET google_sub = 'google-123'"))
+        conn.commit()
 
     manage.main(["reset-password", "--email", "both@example.com"])
 
@@ -154,8 +146,6 @@ def test_unusable_passwords_leave_members_unchanged(
     ]
     if command == "reset-password":
         manage.main(create_args)
-    else:
-        database_module.init_db()
     before = [dict(row) for row in read_members(cli_db)]
     monkeypatch.setattr(manage.getpass, "getpass", lambda *args: password)
 
@@ -173,7 +163,6 @@ def test_unusable_passwords_leave_members_unchanged(
 @pytest.mark.parametrize("password", ["good pass", "x" * 1024])
 def test_accepted_passwords_work_at_login(cli_db, monkeypatch, password):
     monkeypatch.setattr(manage.getpass, "getpass", lambda *args: password)
-    monkeypatch.setattr(main_module, "get_connection", database_module.get_connection)
     manage.main([
         "create-member", "--email", "test@example.com",
         "--first-name", "Sam", "--last-name", "Reed",

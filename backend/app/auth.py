@@ -5,6 +5,7 @@ from app import config
 from fastapi import HTTPException, Request
 from pwdlib import PasswordHash
 from pwdlib.hashers.argon2 import Argon2Hasher
+from sqlalchemy import text
 
 _password_hash = PasswordHash((Argon2Hasher(),))
 
@@ -105,17 +106,25 @@ def clear_session_cookie(response):
 
 
 def load_member(conn, member_id):
-    return conn.execute(
-        "SELECT * FROM members WHERE id = ?",
-        (member_id,),
-    ).fetchone()
+    return (
+        conn.execute(
+            text("SELECT * FROM members WHERE id = :id"),
+            {"id": member_id},
+        )
+        .mappings()
+        .fetchone()
+    )
 
 
 def find_member_by_email(conn, email):
-    return conn.execute(
-        "SELECT * FROM members WHERE email = ?",
-        (normalize_email(email),),
-    ).fetchone()
+    return (
+        conn.execute(
+            text("SELECT * FROM members WHERE email = :email"),
+            {"email": normalize_email(email)},
+        )
+        .mappings()
+        .fetchone()
+    )
 
 
 # Every response that includes a member goes through here. Emails, phone
@@ -179,16 +188,20 @@ def require_page_member(request: Request):
 
 
 def find_member_by_google_sub(conn, google_sub):
-    return conn.execute(
-        "SELECT * FROM members WHERE google_sub = ?",
-        (google_sub,),
-    ).fetchone()
+    return (
+        conn.execute(
+            text("SELECT * FROM members WHERE google_sub = :google_sub"),
+            {"google_sub": google_sub},
+        )
+        .mappings()
+        .fetchone()
+    )
 
 
 def link_google_account(conn, member_id, google_sub):
     conn.execute(
-        "UPDATE members SET google_sub = ? WHERE id = ?",
-        (google_sub, member_id),
+        text("UPDATE members SET google_sub = :google_sub WHERE id = :id"),
+        {"google_sub": google_sub, "id": member_id},
     )
 
 

@@ -8,6 +8,7 @@ import pytest
 from authlib.jose.errors import BadSignatureError
 from app import auth, config
 from conftest import DEFAULT_MEMBER_ID, seed_member
+from sqlalchemy import text
 
 
 # Stands in for Google returning a signed-in user.
@@ -37,7 +38,10 @@ def callback(client):
 
 def test_member_matched_by_google_sub(conn):
     seed_member(conn, "member-g", email="g@example.com")
-    conn.execute("UPDATE members SET google_sub = ? WHERE id = ?", ("sub-1", "member-g"))
+    conn.execute(
+        text("UPDATE members SET google_sub = :sub WHERE id = :id"),
+        {"sub": "sub-1", "id": "member-g"},
+    )
     conn.commit()
 
     member = auth.member_for_google_claims(conn, "sub-1", "other@example.com", True)
@@ -69,7 +73,10 @@ def test_unknown_email_is_not_admitted(conn):
 # A member already tied to one Google account is never moved to another.
 def test_member_with_a_different_google_sub_is_not_relinked(conn):
     seed_member(conn, "member-g", email="g@example.com")
-    conn.execute("UPDATE members SET google_sub = ? WHERE id = ?", ("sub-1", "member-g"))
+    conn.execute(
+        text("UPDATE members SET google_sub = :sub WHERE id = :id"),
+        {"sub": "sub-1", "id": "member-g"},
+    )
     conn.commit()
 
     assert auth.member_for_google_claims(conn, "sub-2", "g@example.com", True) is None
