@@ -7,7 +7,7 @@ Ship a secure, polished club beta in reviewable slices while keeping the system 
 - Continue on `feature/v1-beta`. Use one reviewable commit per slice.
 - Three screens: sign-in, a homepage listing three properties, and the property map.
 - Sign in with Google, or with a manually created email/password account. Pre-authorized members only; no public signup either way.
-- Slices 1 and 2 are complete. Remaining work is properties, sign-in, pages, database portability, and deployment.
+- Slices 1–7 are complete. The beta is live at https://black-creek-hunt.vercel.app (verified on a phone over cellular, 2026-09-19). Remaining work is the README, real property data before club invitations, and polish.
 - All of it ships before the first deploy. Launching single-property first would mean migrating a live database and changing bookmarked URLs.
 - No framework rewrite. The frontend stays vanilla HTML, CSS, and JavaScript with no build step. See "Later: Learning React."
 - After every slice, pause for a structural walkthrough and a five-minute reading/modification exercise.
@@ -38,7 +38,7 @@ Ship a secure, polished club beta in reviewable slices while keeping the system 
 - Dark map, frosted panel, blaze-orange active state, red overdue state, gray open state, seat-gauge markers.
 - Known gap: `property.css` names Inter first but no font is loaded; the page falls back to `system-ui`. Load real fonts or drop the declaration.
 
-### 3. Properties in the data model
+### 3. Properties in the data model — COMPLETE
 
 Backend first. No new dependencies. Keeps the 36-test baseline green throughout.
 
@@ -66,7 +66,7 @@ Backend first. No new dependencies. Keeps the 36-test baseline green throughout.
 - `property.js` reads the property slug from the URL and takes map center and zoom from the API.
 - Replaces the hardcoded `DEFAULT_MAP_CENTER` and `DEFAULT_MAP_ZOOM` constants. Nothing else changes.
 
-### 4. Sign in
+### 4. Sign in — COMPLETE
 
 Two ways in, one allowlist. Begin by moving the frontend behind FastAPI on a single origin: OAuth needs a stable redirect target, and it removes the CORS configuration and the port-sniffing `API_URL` logic at the top of `property.js`.
 
@@ -105,7 +105,7 @@ Two ways in, one allowlist. Begin by moving the frontend behind FastAPI on a sin
 - Requires a Google Cloud project, OAuth consent screen, client ID and secret, and authorized redirect URIs.
 - Redirect URIs differ between local development and production.
 
-### 5. The three pages
+### 5. The three pages — COMPLETE
 
 - FastAPI serves `/login`, `/` (homepage), and `/property/{slug}`. Three HTML files; no client-side routing.
 - Stand deep links survive as `/property/{slug}?stand={id}`.
@@ -115,14 +115,14 @@ Two ways in, one allowlist. Begin by moving the frontend behind FastAPI on a sin
 - Property page: the existing map, plus a way back to the homepage.
 - Every page loads `base.css` (color tokens, reset, base form controls) first, then its own stylesheet. No new color tokens.
 
-### 6. Database portability
+### 6. Database portability — COMPLETE
 
 - Introduce SQLAlchemy Core as the compatibility layer for local SQLite and production Postgres.
 - Use Neon through `DATABASE_URL`.
 - Seed fresh demo data: three demo properties, demo stands and features, demo accounts. Do not copy local hunt history.
 - Re-run the full backend suite against both SQLite and Postgres.
 
-### 7. Deploy the beta
+### 7. Deploy the beta — COMPLETE
 
 - Deploy the static frontend and FastAPI together on Vercel Hobby using relative `/api` requests and one origin.
 - No build step: HTML, CSS, JS, and `assets/` deploy as-is.
@@ -130,7 +130,7 @@ Two ways in, one allowlist. Begin by moving the frontend behind FastAPI on a sin
 - Add the production redirect URI to the Google Cloud console. Sign-in fails silently without it.
 - Use the generated HTTPS `vercel.app` address; defer a custom domain.
 - Pause for the user to create or sign into Vercel, Neon, and Google Cloud and enter secrets, then verify the deployment.
-- Document local setup, account creation for both methods, Google OAuth setup, deployment, database export/backup, and recovery in the README.
+- Document local setup, account creation for both methods, Google OAuth setup, deployment, database export/backup, and recovery in the README. **Still open** — README deferred; see `docs/PLAN-DEPLOYMENT.md` for the deploy runbook and what was actually done.
 - Reconfirm current Vercel and Neon free-tier requirements immediately before deployment.
 
 ## Public Interfaces
