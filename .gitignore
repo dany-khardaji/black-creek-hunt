@@ -37,3 +37,6 @@ yarn-error.log*
 Thumbs.db
 Notes.md
 .vscode/settings.json
+
+# Vercel
+.vercel/
