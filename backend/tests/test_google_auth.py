@@ -124,6 +124,22 @@ def test_callback_turns_a_non_member_away(anonymous_client, conn, monkeypatch):
     assert config.SESSION_COOKIE_NAME not in response.cookies
 
 
+def test_callback_turning_a_non_member_away_ends_the_old_session(anonymous_client, conn, monkeypatch):
+    seed_member(conn, DEFAULT_MEMBER_ID, email="mike@example.com")
+    anonymous_client.cookies.set(
+        config.SESSION_COOKIE_NAME, auth.create_session_token(DEFAULT_MEMBER_ID)
+    )
+    fake_google(monkeypatch, {"sub": "sub-z", "email": "stranger@example.com", "email_verified": True})
+
+    response = callback(anonymous_client)
+
+    assert response.headers["location"] == "/login?error=not_a_member"
+    # the browser is told to drop the cookie it arrived with
+    set_cookie = response.headers["set-cookie"]
+    assert config.SESSION_COOKIE_NAME in set_cookie
+    assert "max-age=0" in set_cookie.lower() or "expires=" in set_cookie.lower()
+
+
 def test_callback_handles_a_refused_consent_screen(anonymous_client, conn, monkeypatch):
     fake_google(monkeypatch, fail=True)
 

@@ -213,7 +213,11 @@ async def google_callback(request: Request):
     # pausing every other request handled by this process.
     member = await run_in_threadpool(complete_google_sign_in, claims, now)
     if member is None:
-        return RedirectResponse(f"{config.LOGIN_PATH}?error=not_a_member", 303)
+        # a refused account also ends any session already in the browser, so
+        # switching to a non-member never looks like it worked
+        response = RedirectResponse(f"{config.LOGIN_PATH}?error=not_a_member", 303)
+        auth.clear_session_cookie(response)
+        return response
 
     response = RedirectResponse("/", status_code=303)
     auth.set_session_cookie(
