@@ -1,0 +1,6 @@
+# keep local-only files out of the function bundle
+backend/tests/
+backend/venv/
+docs/
+*.db
+.env*

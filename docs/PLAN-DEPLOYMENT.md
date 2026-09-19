@@ -26,7 +26,7 @@ Verified against current Vercel and Neon docs (Aug 2026):
 - **Vercel supports Python 3.14** and native FastAPI detection. The entrypoint is set with `[tool.vercel] entrypoint = "<module>:app"` in a root `pyproject.toml`, resolved from the repo root. No `api/` directory.
 - **The backend imports as `app.*` from inside `backend/`** ([main.py:5](../backend/app/main.py#L5), same for 10 other files including `seed.py` and `manage.py`). `backend.app.main:app` fails with `ModuleNotFoundError: No module named 'app'`. A one-file shim at the repo root fixes it without touching those files.
 - **Root Directory must stay `.`.** Vercel docs: an app "will not be able to access files outside of that directory" and "cannot use `..`". [main.py:705](../backend/app/main.py#L705) climbs three levels to `frontend/`, so setting Root Directory to `backend` would 404 (page not found) every page.
-- **Dependencies are read from a root `requirements.txt`.** Ours is in `backend/`. Vercel won't find it there.
+- **When `pyproject.toml` has a `[project]` table, Vercel installs from its `dependencies` list with `uv` and ignores `requirements.txt`.** First build proved it: the log said `Installing required dependencies from pyproject.toml...` and installed nothing. So the runtime packages live in `pyproject.toml`; `backend/requirements.txt` stays for local dev and tests.
 - **`SessionMiddleware` changes static-file handling.** Vercel normally promotes `app.mount("/static", ...)` files to its CDN, which would bypass the `Depends(auth.require_page_member)` guards. Because the app has top-level middleware, Vercel automatically keeps all static files inside the function. This is the correct behavior for guarded pages — **do not set `cdn = true`**.
 - **Bundle limit is 500 MB.** Well clear; the frontend is a few files and one logo.
 - **`open()` uses the project root as cwd.** `FRONTEND` and seed paths are computed from `__file__`, so they're unaffected.
@@ -37,17 +37,21 @@ Verified against current Vercel and Neon docs (Aug 2026):
 
 ## Code changes
 
-Four new files, two edits. All at the repo root unless noted.
+Three new files, two edits. All at the repo root unless noted.
 
 ### 1. `pyproject.toml` (new)
 
-Tells Vercel where the app is and which Python to use.
+Tells Vercel which Python, which packages, and where the app is.
 
 ```toml
 [project]
 name = "black-creek-hunt"
 version = "0.1.0"
 requires-python = ">=3.14"
+dependencies = [
+    "fastapi==0.141.1",
+    # ... every line from backend/requirements.txt minus the dev-only packages
+]
 
 [tool.vercel]
 entrypoint = "vercel_app:app"
@@ -55,28 +59,23 @@ entrypoint = "vercel_app:app"
 
 `requires-python` pins Vercel to 3.14, matching local. Without it Vercel defaults to 3.12 and the pinned wheels (`pydantic_core`, `psycopg-binary`, `cryptography`) may not resolve.
 
-### 2. `requirements.txt` (new, root)
+`dependencies` is `backend/requirements.txt` **minus the dev-only packages**: `pytest`, `pluggy`, `iniconfig`, `Pygments`, `pytokens`, `mypy_extensions`, `pathspec`, `platformdirs`, `packaging`. Keep `click` (uvicorn needs it). When a package is bumped, update both files.
 
-Vercel reads this location. Copy `backend/requirements.txt` **minus the dev-only packages**: `pytest`, `pluggy`, `iniconfig`, `Pygments`, `pytokens`, `mypy_extensions`, `pathspec`, `platformdirs`, `packaging`. Keep `click` (uvicorn needs it).
+### 2. `.vercelignore` (new)
 
-Keep `backend/requirements.txt` as-is for local dev and tests. Two files is a known duplication.
+Keeps tests, docs, and local-only files out of the function bundle. Same syntax as `.gitignore`.
 
-### 3. `vercel.json` (new)
-
-Excludes tests and local-only files from the function bundle. Keyed by the resolved entrypoint file.
-
-```json
-{
-  "$schema": "https://openapi.vercel.sh/vercel.json",
-  "functions": {
-    "vercel_app.py": {
-      "excludeFiles": "{backend/tests/**,backend/venv/**,docs/**,*.db,.env*}"
-    }
-  }
-}
+```
+backend/tests/
+backend/venv/
+docs/
+*.db
+.env*
 ```
 
-### 4. `vercel_app.py` (new)
+A `vercel.json` with a `functions` → `excludeFiles` entry was tried first. Vercel rejected it at build time: "The pattern doesn't match any Serverless Functions inside the `api` directory." The `functions` key only understands the `api/` layout, not a `pyproject.toml` entrypoint.
+
+### 3. `vercel_app.py` (new)
 
 The shim Vercel imports. Adds `backend/` to `sys.path`, then re-exports the real app. Eight lines, no logic.
 
@@ -91,11 +90,11 @@ from app.main import app  # noqa: E402
 
 Verified locally: `backend/venv/bin/python -c "from vercel_app import app"` from the repo root loads a `FastAPI` instance and `FRONTEND` resolves to `<repo>/frontend`.
 
-### 5. `.env.example` (edit)
+### 4. `.env.example` (edit)
 
 Line 13 still says `# Path to the SQLite file, relative to backend/` above `DATABASE_URL`. Replace with a comment describing the Neon connection string and that `DATABASE_URL_POOLED` is preferred in production. Add a `# --- Production only ---` block noting `SESSION_COOKIE_SECURE=1` and `APP_ORIGIN=https://<your-app>.vercel.app`.
 
-### 6. `.gitignore` (edit)
+### 5. `.gitignore` (edit)
 
 Add `.vercel/` — the CLI writes project-link metadata there.
 
@@ -129,7 +128,8 @@ Every variable, where the value comes from, and which environment (Production):
 Do **not** set `TEST_DATABASE_URL` or `SKIP_ENV_FILE` in Vercel.
 
 **3. Set the Production Branch**
-- Project Settings → Git → Production Branch → `feature/v1-beta`.
+- Project Settings → **Environments** → **Production** → **Branch Tracking** → `feature/v1-beta` → Save. (Not under Git; Vercel moved it.)
+- Deployments → **Create Deployment** → enter `feature/v1-beta`. The import-screen deploy built `main`, which 404s (page not found) because it has no Vercel config. Expected.
 - Every push to that branch redeploys production. Other branches get preview URLs.
 
 **4. First deploy and the APP_ORIGIN loop**
@@ -163,7 +163,7 @@ Do **not** set `TEST_DATABASE_URL` or `SKIP_ENV_FILE` in Vercel.
 
 **8. Known gaps and what's next**
 - Neon cold start after 5 min idle.
-- `requirements.txt` is duplicated (root vs `backend/`).
+- Package pins live in two places: `pyproject.toml` (Vercel) and `backend/requirements.txt` (local + tests).
 - No README yet.
 - Demo data is live; real coordinates come later via `seed.py` against production.
 - Custom domain deferred per [PLAN.md:131](PLAN.md#L131).
@@ -174,7 +174,7 @@ Do **not** set `TEST_DATABASE_URL` or `SKIP_ENV_FILE` in Vercel.
 
 ## Order of work
 
-1. Code changes 1-6 above. Small, mechanical.
+1. Code changes 1-5 above. Small, mechanical.
 2. Run the suite locally — should stay at 193, nothing here touches app logic.
 3. Commit: `feat: add vercel deployment config`.
 4. **Hand off to the user.** They follow the manual steps above. Steps 1-7 are theirs — I can't create the Vercel account or paste secrets.
@@ -185,8 +185,7 @@ Do **not** set `TEST_DATABASE_URL` or `SKIP_ENV_FILE` in Vercel.
 - `backend/venv/bin/pytest -q backend` — 193 passing, unchanged.
 - `git diff --check` — clean.
 - `python3 -c "import tomllib; tomllib.load(open('pyproject.toml','rb'))"` — TOML parses.
-- `python3 -c "import json; json.load(open('vercel.json'))"` — JSON parses.
-- Root `requirements.txt` has no `pytest` line: `! grep -q '^pytest' requirements.txt`.
+- `pyproject.toml` has no `pytest` line: `! grep -q '"pytest' pyproject.toml`.
 - **The real verification is step 7 of the manual steps**, done by the user on a live URL. Nothing here can be confirmed until then.
 
 ## Risks
