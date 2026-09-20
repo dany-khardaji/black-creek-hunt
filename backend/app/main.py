@@ -741,9 +741,18 @@ def get_map_state(property: str=PRIMARY_PROPERTY_ID, member=Depends(auth.require
 FRONTEND = Path(__file__).parent.parent.parent / "frontend"
 
 
+# Same reasoning as the static files below: without a cache header a browser
+# keeps a page as long as it likes, so an edited page can take hours to appear
+# during local development. Production caches normally.
+def page_response(path):
+    if config.SESSION_COOKIE_SECURE:
+        return FileResponse(path)
+    return FileResponse(path, headers={"Cache-Control": "no-store, must-revalidate"})
+
+
 @app.get("/", include_in_schema=False)
 def home_page(member=Depends(auth.require_page_member)):
-    return FileResponse(FRONTEND / "home" / "index.html")
+    return page_response(FRONTEND / "home" / "index.html")
 
 
 @app.get("/login", include_in_schema=False)
@@ -751,13 +760,13 @@ def login_page(request: Request):
     # Someone already signed in has no use for the form.
     if auth.current_member_or_none(request) is not None:
         return RedirectResponse("/", status_code=303)
-    return FileResponse(FRONTEND / "login" / "index.html")
+    return page_response(FRONTEND / "login" / "index.html")
 
 
 # one page serves every property; property.js reads the slug from the path.
 @app.get("/property/{slug}", include_in_schema=False)
 def property_page(slug: str, member=Depends(auth.require_page_member)):
-    return FileResponse(FRONTEND / "property" / "index.html")
+    return page_response(FRONTEND / "property" / "index.html")
 # --------------------------------------------------------------------------------------
 
 
