@@ -20,7 +20,7 @@ body {
 
 .brand-logo {
   display: block;
-  width: clamp(7rem, 24.2vw, 19.8rem);
+  width: clamp(6rem, 36vw, 19.8rem);
   height: auto;
   object-fit: contain;
   object-position: left center;

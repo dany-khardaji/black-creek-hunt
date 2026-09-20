@@ -38,6 +38,58 @@ body {
   background: linear-gradient(rgba(18, 20, 18, 0.92), transparent);
 }
 
+/* space-between would otherwise push the back button and the logo to opposite
+   ends of the bar. */
+.back-button + .brand-home-link {
+  margin-right: auto;
+}
+
+/* Same frosted treatment as the map's zoom controls, so the two read as one
+   set of controls rather than two different styles. */
+.back-button {
+  display: grid;
+  flex: none;
+  place-items: center;
+  width: 44px;
+  height: 44px;
+  border: 1px solid var(--border);
+  border-radius: 50%;
+  background: rgba(18, 20, 18, 0.88);
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.32);
+  color: var(--text);
+  pointer-events: auto;
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+  transition: border-color 160ms ease-out;
+}
+
+.back-button svg {
+  width: 22px;
+  height: 22px;
+  /* Nudged left so the chevron looks centred: its visual weight sits right. */
+  margin-right: 2px;
+  fill: none;
+  stroke: currentColor;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  stroke-width: 2;
+}
+
+.back-button:hover {
+  border-color: var(--active);
+}
+
+.back-button:focus-visible {
+  outline: 3px solid var(--focus);
+  outline-offset: 3px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .back-button {
+    transition: none;
+  }
+}
+
 /* The top bar ignores pointer events so map drags pass through it; the home
    link opts back in for itself only. */
 .brand-home-link {
@@ -53,7 +105,7 @@ body {
 
 .brand-logo {
   display: block;
-  width: clamp(11rem, 24.2vw, 19.8rem);
+  width: clamp(6rem, 36vw, 19.8rem);
   height: auto;
   object-fit: contain;
   object-position: left center;
