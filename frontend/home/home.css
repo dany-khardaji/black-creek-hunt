@@ -18,8 +18,11 @@ body {
   border-bottom: 1px solid var(--border);
 }
 
+/* Takes the leftover room so the counter and the sign-out button sit together
+   on the right rather than the counter floating in the middle. */
 .brand-logo {
   display: block;
+  margin-right: auto;
   width: clamp(6rem, 36vw, 19.8rem);
   height: auto;
   object-fit: contain;
