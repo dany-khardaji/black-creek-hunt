@@ -20,7 +20,7 @@ body {
 
 .brand-logo {
   display: block;
-  width: clamp(11rem, 24.2vw, 19.8rem);
+  width: clamp(7rem, 24.2vw, 19.8rem);
   height: auto;
   object-fit: contain;
   object-position: left center;
@@ -81,7 +81,9 @@ body {
   margin: 0;
   padding: 0;
   list-style: none;
-  grid-template-columns: repeat(auto-fill, minmax(16rem, 1fr));
+  /* min() so the track can fall below 16rem on a narrow phone. A bare 16rem
+     minimum cannot shrink, which makes the whole page wider than the screen. */
+  grid-template-columns: repeat(auto-fill, minmax(min(16rem, 100%), 1fr));
 }
 
 /* The whole card is one link, so the entire surface is a tap target. */
