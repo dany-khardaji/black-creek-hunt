@@ -142,3 +142,16 @@ def test_overdue_hunts_ignores_checked_out_hunts(conn):
     )
 
     assert overdue_hunts(conn, now) == []
+
+
+# A hunt checked in at exactly 3am belongs to the session that just ended, not
+# the new one. The map queries and the checkout guard must agree on that.
+def test_hunt_exactly_on_boundary_is_not_active(conn):
+    now = datetime(2026, 11, 10, 17, 0, tzinfo=timezone.utc)
+    boundary = session_boundary(now)
+
+    seed_stand(conn, "test-stand-1")
+    seed_hunt(conn, "test-stand-1", checked_in_at=boundary.isoformat())
+
+    assert is_stand_occupied(conn, "test-stand-1", now) is False
+    assert overdue_hunts(conn, now) == []

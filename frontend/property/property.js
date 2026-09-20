@@ -135,6 +135,13 @@ const addGuestButton = document.getElementById("add-guest");
 const checkOutButton = document.getElementById("check-out-button");
 const appMessage = document.getElementById("app-message");
 const overdueBanner = document.getElementById("overdue-banner");
+
+// The logo is a plain image rather than a second home link, so the arrow beside
+// it is the only one a screen reader announces. Members still expect a tap on
+// the logo to go home, so that is handled here.
+document.getElementById("brand-logo").addEventListener("click", () => {
+  window.location.assign("/");
+});
 const overdueAnnouncer = document.getElementById("overdue-announcer");
 const liveCounter = document.getElementById("live-counter");
 const liveCountValue = document.getElementById("live-count-value");

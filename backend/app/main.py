@@ -14,6 +14,7 @@ from app.sessions import (
 import httpx
 from authlib.common.errors import AuthlibBaseError
 from authlib.integrations.starlette_client import OAuth
+from joserfc.errors import JoseError
 from fastapi import Depends, FastAPI, HTTPException, Request, Response
 from fastapi.responses import FileResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
@@ -226,10 +227,12 @@ async def google_callback(request: Request):
 
     try:
         token = await oauth.google.authorize_access_token(request)
-    # AuthlibBaseError covers a denied consent screen, a stale state, a replayed
-    # code, and a token that fails its signature check; httpx covers Google being
-    # unreachable. Either way a person sees the login page, not a 500.
-    except (AuthlibBaseError, httpx.HTTPError):
+    # AuthlibBaseError covers a denied consent screen, a stale state, and a
+    # replayed code; JoseError covers a token that fails its signature or claim
+    # checks, which Authlib raises from joserfc and which is not an
+    # AuthlibBaseError; httpx covers Google being unreachable. Either way a
+    # person sees the login page, not a 500.
+    except (AuthlibBaseError, JoseError, httpx.HTTPError):
         return RedirectResponse(f"{config.LOGIN_PATH}?error=google_failed", 303)
 
     claims = token.get("userinfo") or {}

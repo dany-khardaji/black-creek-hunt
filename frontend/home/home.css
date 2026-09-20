@@ -70,8 +70,6 @@ body {
   letter-spacing: -0.01em;
 }
 
-/* No min-height or bottom margin: the heading owns the gap above the cards, so
-   an empty message must take up no room at all. */
 /* home.js hides this when empty, so the margin only applies when there is
    really something to read. */
 #home-message {

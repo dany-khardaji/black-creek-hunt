@@ -5,9 +5,9 @@
 import app.main as main_module
 import httpx
 import pytest
-from authlib.jose.errors import BadSignatureError
 from app import auth, config
 from conftest import DEFAULT_MEMBER_ID, seed_member
+from joserfc.errors import BadSignatureError
 from sqlalchemy import text
 
 

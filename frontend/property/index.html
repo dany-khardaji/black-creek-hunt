@@ -27,15 +27,18 @@
         </svg>
       </a>
 
-      <a class="brand-home-link" href="/" aria-label="Back to all properties">
-        <img
-          class="brand-logo"
-          src="/static/assets/black-creek-hunt-logo.png"
-          alt="Black Creek Hunt"
-          width="2172"
-          height="724"
-        />
-      </a>
+      <!-- A plain image, not a second link: the arrow beside it already goes
+           home, and two links with the same label is noise for a screen
+           reader. property.js still sends a tap here home, because members are
+           used to that. -->
+      <img
+        id="brand-logo"
+        class="brand-logo"
+        src="/static/assets/black-creek-hunt-logo.png"
+        alt="Black Creek Hunt"
+        width="2172"
+        height="724"
+      />
       <p
         id="live-counter"
         class="live-counter"

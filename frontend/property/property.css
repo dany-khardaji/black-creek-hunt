@@ -40,7 +40,7 @@ body {
 
 /* space-between would otherwise push the back button and the logo to opposite
    ends of the bar. */
-.back-button + .brand-home-link {
+.back-button + .brand-logo {
   margin-right: auto;
 }
 
@@ -90,21 +90,12 @@ body {
   }
 }
 
-/* The top bar ignores pointer events so map drags pass through it; the home
-   link opts back in for itself only. */
-.brand-home-link {
-  display: block;
-  pointer-events: auto;
-}
-
-.brand-home-link:focus-visible {
-  outline: 3px solid var(--focus);
-  outline-offset: 4px;
-  border-radius: 6px;
-}
-
+/* The top bar ignores pointer events so map drags pass through it; the logo
+   opts back in so a tap on it still goes home. */
 .brand-logo {
   display: block;
+  cursor: pointer;
+  pointer-events: auto;
   width: clamp(6rem, 36vw, 19.8rem);
   height: auto;
   object-fit: contain;

@@ -8,9 +8,9 @@ Black Creek Hunt is a members-only hunting-club application for viewing properti
 
 ## Stack
 
-- Current backend: Python 3.11+, FastAPI, synchronous `sqlite3`, and Pytest.
-- Current frontend: vanilla JavaScript, semantic HTML, CSS, and Leaflet.
-- Planned production stack: SQLAlchemy 2.0 Core, PostgreSQL through Neon, and Vercel.
+- Backend: Python 3.14, FastAPI, SQLAlchemy 2.0 Core over PostgreSQL (Neon), and Pytest.
+- Frontend: vanilla JavaScript, semantic HTML, CSS, and Leaflet. No build step.
+- Deployed on Vercel. Tests run against a separate Neon branch through `TEST_DATABASE_URL`.
 - Do not describe planned technology as already implemented.
 
 ## Working Agreements
@@ -26,8 +26,8 @@ Black Creek Hunt is a members-only hunting-club application for viewing properti
 - Keep synchronous database work in synchronous `def` routes. Use `async def` only when the full I/O path is asynchronous.
 - Preserve transactional check-in and checkout behavior, deterministic stand locking, session boundaries, and property scoping.
 - Use shared, deterministic Pytest fixtures for database and client setup.
-- When SQLAlchemy is introduced, use 2.0 Core tables, connections, and transactions—not legacy ORM `Query` APIs.
-- Isolate unavoidable SQLite/PostgreSQL differences in the database layer and test both implementations.
+- Use SQLAlchemy 2.0 Core tables, connections, and transactions—not legacy ORM `Query` APIs.
+- PostgreSQL only. SQLite is no longer supported anywhere, including tests.
 
 ## Frontend
 

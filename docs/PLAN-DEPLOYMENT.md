@@ -1,5 +1,9 @@
 # Slice 7 — Deploy the beta to Vercel
 
+> **Historical.** This plan was written before the slice ran. Slice 7 is
+> complete and the beta is live; the "Context" below describes the state at the
+> time of writing, not today.
+
 ## Context
 
 Slices 1-6 are done and merged to `feature/v1-beta`. The app runs locally against Neon Postgres: login (password and Google), locked routes, real identity, admin checkout, sign-out, and the three pages all work in the browser.
