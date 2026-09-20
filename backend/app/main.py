@@ -5,7 +5,12 @@ from pathlib import Path
 from app import auth, config
 from app.database import PRIMARY_PROPERTY_ID, get_connection
 from app.models import CheckInRequest, LoginRequest
-from app.sessions import active_hunt_count, is_hunt_overdue, session_boundary
+from app.sessions import (
+    active_hunt_count,
+    is_hunt_overdue,
+    overdue_hunts,
+    session_boundary,
+)
 import httpx
 from authlib.common.errors import AuthlibBaseError
 from authlib.integrations.starlette_client import OAuth
@@ -82,6 +87,28 @@ def initials(name):
 
 def utc_now():
     return datetime.now(timezone.utc)
+
+
+# Names and stands only. The alert says who to go look for, so it carries no
+# phone numbers or coordinates that a signed-in member cannot already see.
+def overdue_summary(conn, now, property_id=None):
+    rows = overdue_hunts(conn, now)
+
+    return [
+        {
+            "hunt_id": row["id"],
+            "name": display_name(row),
+            "stand_name": row["stand_name"],
+            "checked_in_at": row["checked_in_at"],
+            "hours_out": round(
+                (now - datetime.fromisoformat(row["checked_in_at"])).total_seconds()
+                / 3600,
+                1,
+            ),
+        }
+        for row in rows
+        if property_id is None or row["property_id"] == property_id
+    ]
 
 
 def complete_google_sign_in(claims, now):
@@ -288,7 +315,8 @@ def get_property(slug: str, member=Depends(auth.require_api_member)):
 @app.get("/api/live-count")
 def get_live_count(member=Depends(auth.require_api_member)):
     conn = get_connection()
-    boundary = session_boundary(utc_now()).isoformat()
+    now = utc_now()
+    boundary = session_boundary(now).isoformat()
 
     try:
         live_count = conn.execute(
@@ -301,7 +329,10 @@ def get_live_count(member=Depends(auth.require_api_member)):
             ),
             {"boundary": boundary},
         ).scalar()
-        return {"live_count": live_count}
+        return {
+            "live_count": live_count,
+            "overdue": overdue_summary(conn, now),
+        }
     finally:
         conn.close()
 
@@ -698,6 +729,7 @@ def get_map_state(property: str=PRIMARY_PROPERTY_ID, member=Depends(auth.require
             "stands": stand_states,
             "map_features": features,
             "live_count": live_count,
+            "overdue": overdue_summary(conn, now, property_id=property_id),
         }
     finally:
         conn.close()
@@ -729,5 +761,21 @@ def property_page(slug: str, member=Depends(auth.require_page_member)):
 # --------------------------------------------------------------------------------------
 
 
+# Without a cache header a browser decides for itself how long to keep a
+# stylesheet, which during local development means editing CSS and being served
+# the old file for hours. Production keeps normal caching, where that is wanted.
+class DevNoCacheStaticFiles(StaticFiles):
+    def file_response(self, *args, **kwargs):
+        response = super().file_response(*args, **kwargs)
+        response.headers["Cache-Control"] = "no-store, must-revalidate"
+        return response
+
+
+static_files = (
+    StaticFiles(directory=FRONTEND)
+    if config.SESSION_COOKIE_SECURE
+    else DevNoCacheStaticFiles(directory=FRONTEND)
+)
+
 # files live under /static/ so that /property/anything does not accidentally match a stylesheet and return the page instead.
-app.mount("/static", StaticFiles(directory=FRONTEND), name="static")
+app.mount("/static", static_files, name="static")

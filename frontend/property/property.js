@@ -134,6 +134,8 @@ const guestFields = document.getElementById("guest-fields");
 const addGuestButton = document.getElementById("add-guest");
 const checkOutButton = document.getElementById("check-out-button");
 const appMessage = document.getElementById("app-message");
+const overdueBanner = document.getElementById("overdue-banner");
+const overdueAnnouncer = document.getElementById("overdue-announcer");
 const liveCounter = document.getElementById("live-counter");
 const liveCountValue = document.getElementById("live-count-value");
 const liveCountLabel = document.getElementById("live-count-label");
@@ -175,6 +177,98 @@ function formatCheckedInTime(value) {
     timeZone: "America/New_York",
     timeZoneName: "short",
   }).format(new Date(value));
+}
+
+// Who was overdue last time. A change here is what triggers the spoken alert,
+// so the same people must not retrigger it as their hours climb.
+let lastOverdueKey = "";
+
+// Collapsed on a phone until tapped. Kept outside renderOverdue so a refresh
+// does not fold the list back up while someone is reading it.
+let isOverdueExpanded = false;
+
+function overdueLine(entry) {
+  return `${entry.name} — ${entry.stand_name}, in since ${formatCheckedInTime(entry.checked_in_at)} (${entry.hours_out}h)`;
+}
+
+// Built element by element rather than as text, because a guest name is typed
+// by a member and must never be treated as page code.
+// speak: false rebuilds the markup without touching the hidden announcer, for
+// a layout change where the same people are still overdue.
+function renderOverdue(overdue = [], { speak = true } = {}) {
+  const lines = overdue.map(overdueLine);
+  // Keyed on who is overdue, not the rendered text. hours_out climbs every few
+  // minutes, and announcing that again would interrupt for no new information.
+  const key = overdue.map((entry) => entry.hunt_id).join("|");
+  const isSamePeople = key === lastOverdueKey;
+  lastOverdueKey = key;
+
+  if (overdue.length === 0) {
+    overdueBanner.replaceChildren();
+    overdueBanner.hidden = true;
+    overdueAnnouncer.textContent = "";
+    return;
+  }
+
+  // Same people, so only the hours changed: update the text in place. The
+  // banner is not a live region, so this is silent.
+  if (isSamePeople) {
+    const items = overdueBanner.querySelectorAll("li");
+    if (items.length === lines.length) {
+      items.forEach((item, index) => {
+        item.textContent = lines[index];
+      });
+      return;
+    }
+  }
+
+  const hunterWord = overdue.length === 1 ? "hunter" : "hunters";
+
+  // Only a phone collapses the list, so only a phone gets a button. On desktop
+  // the names are always visible, and a button that does nothing would be
+  // announced as a control and be focusable for no reason.
+  const isCollapsible = isBottomSheet();
+  const heading = document.createElement(isCollapsible ? "button" : "strong");
+
+  if (isCollapsible) {
+    heading.type = "button";
+    heading.className = "overdue-toggle";
+    heading.setAttribute("aria-expanded", String(isOverdueExpanded));
+    heading.addEventListener("click", () => {
+      isOverdueExpanded = !isOverdueExpanded;
+      overdueBanner.dataset.expanded = String(isOverdueExpanded);
+      heading.setAttribute("aria-expanded", String(isOverdueExpanded));
+    });
+  }
+
+  // The warning sign is its own element so it can be sized larger than the
+  // words without dragging the whole row taller.
+  const warningSign = document.createElement("span");
+  warningSign.className = "overdue-sign";
+  warningSign.setAttribute("aria-hidden", "true");
+  warningSign.textContent = "⚠︎";
+
+  const summaryText = document.createElement("span");
+  summaryText.textContent = `Safety check - ${overdue.length} ${hunterWord} overdue`;
+
+  heading.replaceChildren(warningSign, summaryText);
+
+  const list = document.createElement("ul");
+  for (const line of lines) {
+    const item = document.createElement("li");
+    item.textContent = line;
+    list.append(item);
+  }
+
+  overdueBanner.dataset.expanded = String(isOverdueExpanded);
+  overdueBanner.replaceChildren(heading, list);
+  overdueBanner.hidden = false;
+
+  // Spoken only when the people change, never when their hours tick up or the
+  // layout switches. Read in full because the visible list may be collapsed.
+  if (speak) {
+    overdueAnnouncer.textContent = `Safety check: ${overdue.length} ${hunterWord} overdue. ${lines.join(". ")}`;
+  }
 }
 
 function announce(message, tone = "info") {
@@ -627,6 +721,7 @@ async function refreshMapState({
     );
     mapState = data;
     syncMapPanBounds();
+    renderOverdue(data.overdue);
 
     const noun = data.live_count === 1 ? "Hunter" : "Hunters";
     liveCountValue.textContent = data.live_count;
@@ -789,6 +884,15 @@ async function loadProperty() {
     // surface the error to the member.
   }
 }
+
+// Rotating a phone can cross the bottom-sheet breakpoint, which changes whether
+// the alert is a collapsible button or plain text. The markup is rebuilt for
+// the new layout, but silently: the same people are still overdue and have
+// already been announced.
+window.matchMedia("(max-width: 640px)").addEventListener("change", () => {
+  lastOverdueKey = "";
+  renderOverdue(mapState.overdue, { speak: false });
+});
 
 loadProperty();
 refreshMapState();

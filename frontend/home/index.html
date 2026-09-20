@@ -38,6 +38,20 @@
     </header>
 
     <main class="home-main">
+      <!-- Filled by home.js whenever someone has been out past the overdue
+           mark. Not a live region itself: the hours climb every few minutes,
+           and a screen reader would read the whole banner out each time. -->
+      <div id="overdue-banner" class="overdue-banner" hidden></div>
+
+      <!-- Announces only that someone new is overdue. Assertive because this
+           is the one message worth interrupting for. -->
+      <p
+        id="overdue-announcer"
+        class="visually-hidden"
+        role="alert"
+        aria-live="assertive"
+      ></p>
+
       <h1 class="home-heading">Properties</h1>
       <p id="home-message" role="status" aria-live="polite">Loading properties…</p>
 

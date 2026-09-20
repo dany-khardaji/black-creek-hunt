@@ -614,3 +614,95 @@ select {
     transition: none;
   }
 }
+
+/* The map is full bleed, so the overdue alert floats above it. Sits below the
+   panel and the zoom hint, above the map and the status message. */
+#overdue-banner {
+  position: fixed;
+  z-index: 900;
+  top: calc(4.25rem + env(safe-area-inset-top));
+  left: 50%;
+  /* Capped so a long list scrolls inside the alert instead of covering the
+     map it is warning about. */
+  max-height: 32vh;
+  width: min(32rem, calc(100% - 2rem));
+  transform: translateX(-50%);
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.45);
+}
+
+/* Only the names scroll, so the count stays visible at the top. min-height
+   lets this flex item shrink below its content, which it will not do alone. */
+#overdue-banner ul {
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
+/* The map is the point of this page, so on a phone the alert collapses to its
+   one-line count and the names open on tap. */
+@media (max-width: 640px) {
+  #overdue-banner {
+    /* Tighter than desktop: the 44px toggle supplies the height, so the
+       banner itself only needs enough padding to frame it. */
+    max-height: 60vh;
+    padding: 0.25rem 0.65rem;
+  }
+
+  #overdue-banner:not([data-expanded="true"]) ul {
+    display: none;
+  }
+
+  /* Thin to look at. The negative margin plus larger padding stretches the
+     tappable area past the text to 44px without adding visible height. */
+  #overdue-banner .overdue-toggle {
+    display: flex;
+    min-height: 44px;
+    width: calc(100% + 1.3rem);
+    align-items: center;
+    gap: 0.1rem;
+    margin: -0.25rem -0.65rem;
+    padding: 0 0.65rem;
+    cursor: pointer;
+  }
+
+  /* Takes the leftover room so the caret is pushed to the far right while the
+     sign and the words stay together on the left. */
+  #overdue-banner .overdue-toggle > span:last-of-type {
+    flex: 1;
+    text-align: left;
+  }
+
+  /* Puts the gap back only when the names are showing. */
+  #overdue-banner[data-expanded="true"] .overdue-toggle {
+    margin-bottom: 0;
+  }
+
+  /* A caret that turns to point down once the names are showing. */
+  #overdue-banner .overdue-toggle::after {
+    content: "";
+    width: 0.45rem;
+    height: 0.45rem;
+    flex: none;
+    border-right: 2px solid currentColor;
+    border-bottom: 2px solid currentColor;
+    margin-right: 0.15rem;
+    transform: rotate(-45deg);
+    transition: transform 160ms ease-out;
+  }
+
+  #overdue-banner[data-expanded="true"] .overdue-toggle::after {
+    transform: rotate(45deg);
+  }
+}
+
+@media (max-width: 640px) and (prefers-reduced-motion: reduce) {
+  #overdue-banner .overdue-toggle::after {
+    transition: none;
+  }
+}
+
+/* With an alert on screen the status message drops below it, so the two never
+   cover each other. */
+#overdue-banner:not([hidden]) ~ main #app-message {
+  top: calc(11rem + env(safe-area-inset-top));
+}

@@ -42,6 +42,20 @@
       </p>
     </header>
 
+    <!-- Filled by property.js whenever someone has been out past the overdue
+         mark. Not a live region itself: the hours climb every few minutes, and
+         a screen reader would read the whole banner out each time. -->
+    <div id="overdue-banner" class="overdue-banner" hidden></div>
+
+    <!-- Announces only that someone new is overdue. Assertive because this is
+         the one message worth interrupting for. -->
+    <p
+      id="overdue-announcer"
+      class="visually-hidden"
+      role="alert"
+      aria-live="assertive"
+    ></p>
+
     <main>
       <div id="map" aria-label="Interactive map of hunting stands"></div>
       <p id="app-message" role="status" aria-live="polite">Loading map…</p>

@@ -49,6 +49,16 @@ body {
     calc(1rem + env(safe-area-inset-left));
 }
 
+/* Sits above the page heading, so it needs its own breathing room rather than
+   butting straight against "Properties". Roomier than the property page's
+   copy, which is squeezed because it floats over the map. */
+#overdue-banner {
+  margin-bottom: 2.25rem;
+  gap: 0.45rem;
+  padding: 0.7rem 0.85rem;
+  font-size: 0.85rem;
+}
+
 .home-heading {
   margin: 0 0 0.35rem;
   font-size: 1.75rem;

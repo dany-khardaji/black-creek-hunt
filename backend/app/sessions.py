@@ -51,3 +51,34 @@ def is_hunt_overdue(checked_in_at, now_utc):
         checked_in_at = datetime.fromisoformat(checked_in_at)
 
     return now_utc - checked_in_at >= OVERDUE_AFTER
+
+
+# Everyone still out past the overdue mark, host and guest alike. Longest out
+# comes first, because that is who needs checking on soonest.
+def overdue_hunts(conn, now_utc):
+    boundary = session_boundary(now_utc)
+    cutoff = now_utc - OVERDUE_AFTER
+
+    return (
+        conn.execute(
+            text(
+                """
+                SELECT hunts.id, hunts.member_id, hunts.checked_in_at,
+                       hunts.guest_name,
+                       members.first_name, members.last_name,
+                       stands.name AS stand_name,
+                       stands.property_id
+                FROM hunts
+                JOIN stands ON stands.id = hunts.stand_id
+                LEFT JOIN members ON members.id = hunts.member_id
+                WHERE hunts.checked_out_at IS NULL
+                AND hunts.checked_in_at > :boundary
+                AND hunts.checked_in_at <= :cutoff
+                ORDER BY hunts.checked_in_at
+                """
+            ),
+            {"boundary": boundary.isoformat(), "cutoff": cutoff.isoformat()},
+        )
+        .mappings()
+        .fetchall()
+    )

@@ -73,6 +73,18 @@ button:disabled {
   display: none !important;
 }
 
+/* Off screen but still read aloud. display:none or visibility:hidden would
+   take it out of the accessibility tree and silence it. */
+.visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
 /* Live hunter counter. Used by the homepage (club-wide total) and the
    property page (that property's total). */
 .live-counter {
@@ -132,4 +144,85 @@ button:disabled {
   .live-counter[data-active="true"] .live-indicator {
     animation: none;
   }
+}
+
+/* Overdue safety alert. Used by the homepage (club-wide) and the property
+   page (that property only). Hidden unless someone is genuinely overdue. */
+.overdue-banner {
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+  border: 1px solid var(--overdue);
+  border-radius: 10px;
+  padding: 0.45rem 0.65rem;
+  background: rgba(229, 72, 77, 0.16);
+  color: var(--text);
+  font-size: 0.8rem;
+  line-height: 1.3;
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
+}
+
+.overdue-banner strong {
+  font-size: 0.95rem;
+  letter-spacing: 0.01em;
+}
+
+/* Looks like the heading it replaces, not a button, but stays a real button
+   for keyboard and screen reader use. The global button rule paints a gray
+   surface, so every part of it is cleared here. */
+.overdue-banner .overdue-toggle {
+  min-height: 0;
+  border: 0;
+  border-radius: 4px;
+  padding: 0;
+  /* Transparent, not the banner's red: stacking a second translucent red on
+     top of the first darkens it into a visible patch. */
+  background: transparent;
+  box-shadow: none;
+  color: inherit;
+  font: inherit;
+  font-weight: 700;
+  text-align: left;
+  cursor: default;
+  appearance: none;
+  -webkit-appearance: none;
+}
+
+.overdue-banner .overdue-toggle:hover:not(:disabled) {
+  border-color: transparent;
+  background: transparent;
+}
+
+/* Slightly larger than the words beside it, in the alert's own red. Its line
+   box is zeroed so the taller glyph cannot stretch the row it sits in. */
+.overdue-banner .overdue-sign {
+  flex: none;
+  margin-right: 0.3rem;
+  color: var(--overdue);
+  font-size: 1.15em;
+  line-height: 0;
+  vertical-align: -0.05em;
+}
+
+/* focus-visible only fires for keyboard focus, never a tap or click, so this
+   keeps a ring for keyboard use while a tap shows nothing. Drawn in the
+   alert's own red rather than the shared orange. */
+.overdue-banner .overdue-toggle:focus {
+  outline: none;
+}
+
+.overdue-banner .overdue-toggle:focus-visible {
+  outline: 2px solid var(--overdue);
+  outline-offset: 2px;
+}
+
+.overdue-banner ul {
+  margin: 0;
+  padding-left: 1.1rem;
+  font-variant-numeric: tabular-nums;
+}
+
+.overdue-banner li + li {
+  margin-top: 0.2rem;
 }
