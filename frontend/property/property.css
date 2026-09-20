@@ -412,18 +412,12 @@ select {
   stroke-dashoffset: 1.6;
 }
 
+/* The same dark centre at every occupancy, so the stand icon stays readable
+   against bright fields and dark timber alike. The ring carries the status. */
 .stand-body {
   fill: rgba(18, 20, 18, 0.94);
   stroke: currentColor;
   stroke-width: 1.2;
-}
-
-.stand-marker.active.full .stand-body {
-  fill: rgba(255, 107, 26, 0.2);
-}
-
-.stand-marker.overdue.full .stand-body {
-  fill: rgba(229, 72, 77, 0.2);
 }
 
 .stand-glyph {
