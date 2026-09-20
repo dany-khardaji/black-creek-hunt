@@ -14,7 +14,7 @@ const map = L.map("map", {
   minZoom: MIN_MAP_ZOOM,
   maxBoundsViscosity: 1,
 }).setView(DEFAULT_MAP_CENTER, DEFAULT_MAP_ZOOM);
-map.zoomControl.setPosition("bottomleft");
+map.zoomControl.setPosition("bottomright");
 L.tileLayer(
   "https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}",
   { attribution: "Imagery &copy; Esri", maxZoom: 19 },

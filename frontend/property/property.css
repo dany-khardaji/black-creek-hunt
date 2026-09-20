@@ -500,9 +500,9 @@ select {
   stroke-width: 1.8;
 }
 
-.leaflet-bottom.leaflet-left .leaflet-control-zoom {
+.leaflet-bottom.leaflet-right .leaflet-control-zoom {
   margin-bottom: 4.25rem;
-  margin-left: 1rem;
+  margin-right: 1rem;
   overflow: hidden;
   border: 1px solid var(--border);
   border-radius: 12px;
@@ -579,8 +579,8 @@ select {
     left: calc(0.75rem + env(safe-area-inset-left));
   }
 
-  .leaflet-bottom.leaflet-left .leaflet-control-zoom {
-    margin-left: 0.75rem;
+  .leaflet-bottom.leaflet-right .leaflet-control-zoom {
+    margin-right: 0.75rem;
   }
 
   .leaflet-container .leaflet-control-attribution {
