@@ -62,15 +62,20 @@ body {
   font-size: 0.85rem;
 }
 
+/* The gap below belongs here rather than on #home-message, which is empty once
+   the properties load and so cannot be relied on for spacing. */
 .home-heading {
-  margin: 0 0 0.35rem;
+  margin: 0 0 1.25rem;
   font-size: 1.75rem;
   letter-spacing: -0.01em;
 }
 
+/* No min-height or bottom margin: the heading owns the gap above the cards, so
+   an empty message must take up no room at all. */
+/* home.js hides this when empty, so the margin only applies when there is
+   really something to read. */
 #home-message {
-  min-height: 1.4rem;
-  margin: 0 0 1.5rem;
+  margin: 0 0 1rem;
   color: var(--muted);
 }
 
